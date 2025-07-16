@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub use mcp::McpConfig;
+pub use mcp::{McpConfig, McpServer, SseConfig, StreamableHttpConfig, TlsClientConfig};
 use serde::Deserialize;
 
 /// Main configuration structure for the Nexus application.
@@ -40,7 +40,7 @@ pub struct ServerConfig {
     /// The socket address the server should listen on.
     pub listen_address: Option<SocketAddr>,
     /// TLS configuration for secure connections.
-    pub tls: Option<TlsConfig>,
+    pub tls: Option<TlsServerConfig>,
     /// Health endpoint configuration.
     #[serde(default)]
     pub health: HealthConfig,
@@ -49,7 +49,7 @@ pub struct ServerConfig {
 /// TLS configuration for secure connections.
 #[derive(Default, Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct TlsConfig {
+pub struct TlsServerConfig {
     /// Path to the TLS certificate PEM file.
     pub certificate: PathBuf,
     /// Path to the TLS private key PEM file.
@@ -113,6 +113,7 @@ mod tests {
             mcp: McpConfig {
                 enabled: false,
                 path: "/mcp-path",
+                servers: {},
             },
         }
         "#);
@@ -136,6 +137,241 @@ mod tests {
             mcp: McpConfig {
                 enabled: true,
                 path: "/mcp",
+                servers: {},
+            },
+        }
+        "#);
+    }
+
+    #[test]
+    fn mcp_stdio_server() {
+        let config = indoc! {r#"
+            [mcp.servers.local_code_interpreter]
+            protocol = "stdio"
+            cmd = ["/usr/bin/mcp/code_interpreter_server", "--json-output"]
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+
+        insta::assert_debug_snapshot!(&config.mcp.servers, @r#"
+        {
+            "local_code_interpreter": Stdio {
+                cmd: [
+                    "/usr/bin/mcp/code_interpreter_server",
+                    "--json-output",
+                ],
+            },
+        }
+        "#);
+    }
+
+    #[test]
+    fn mcp_sse_server() {
+        let config = indoc! {r#"
+            [mcp.servers.sse_server]
+            protocol = "sse"
+            sse-endpoint = "http://example.com/sse"
+            message-endpoint = "http://example.com/message"
+
+            [mcp.servers.sse_server.tls]
+            verify-certs = false
+            accept-invalid-hostnames = true
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+
+        insta::assert_debug_snapshot!(&config.mcp.servers, @r#"
+        {
+            "sse_server": Sse(
+                SseConfig {
+                    sse_endpoint: Url {
+                        scheme: "http",
+                        cannot_be_a_base: false,
+                        username: "",
+                        password: None,
+                        host: Some(
+                            Domain(
+                                "example.com",
+                            ),
+                        ),
+                        port: None,
+                        path: "/sse",
+                        query: None,
+                        fragment: None,
+                    },
+                    message_endpoint: Some(
+                        Url {
+                            scheme: "http",
+                            cannot_be_a_base: false,
+                            username: "",
+                            password: None,
+                            host: Some(
+                                Domain(
+                                    "example.com",
+                                ),
+                            ),
+                            port: None,
+                            path: "/message",
+                            query: None,
+                            fragment: None,
+                        },
+                    ),
+                    tls: Some(
+                        TlsClientConfig {
+                            verify_certs: false,
+                            accept_invalid_hostnames: true,
+                            root_ca_cert_path: None,
+                            client_cert_path: None,
+                            client_key_path: None,
+                        },
+                    ),
+                },
+            ),
+        }
+        "#);
+    }
+
+    #[test]
+    fn mcp_streamable_http_server() {
+        let config = indoc! {r#"
+            [mcp.servers.http_server]
+            protocol = "streamable-http"
+            uri = "https://api.example.com"
+
+            [mcp.servers.http_server.tls]
+            verify-certs = true
+            root-ca-cert-path = "/path/to/ca.pem"
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+
+        insta::assert_debug_snapshot!(&config.mcp.servers, @r#"
+        {
+            "http_server": StreamableHttp(
+                StreamableHttpConfig {
+                    uri: Url {
+                        scheme: "https",
+                        cannot_be_a_base: false,
+                        username: "",
+                        password: None,
+                        host: Some(
+                            Domain(
+                                "api.example.com",
+                            ),
+                        ),
+                        port: None,
+                        path: "/",
+                        query: None,
+                        fragment: None,
+                    },
+                    tls: Some(
+                        TlsClientConfig {
+                            verify_certs: true,
+                            accept_invalid_hostnames: false,
+                            root_ca_cert_path: Some(
+                                "/path/to/ca.pem",
+                            ),
+                            client_cert_path: None,
+                            client_key_path: None,
+                        },
+                    ),
+                },
+            ),
+        }
+        "#);
+    }
+
+    #[test]
+    fn mcp_mixed_servers() {
+        let config = indoc! {r#"
+            [mcp]
+            enabled = true
+            path = "/custom-mcp"
+
+            [mcp.servers.local_code_interpreter]
+            protocol = "stdio"
+            cmd = ["/usr/bin/mcp/code_interpreter_server", "--json-output"]
+
+            [mcp.servers.sse_api]
+            protocol = "sse"
+            sse-endpoint = "http://sse-api.internal:8080/events"
+
+            [mcp.servers.streaming_api]
+            protocol = "streamable-http"
+            uri = "http://streaming-api.internal:8080"
+
+            [mcp.servers.another_stdio]
+            protocol = "stdio"
+            cmd = ["python", "-m", "mcp_server", "--port", "3000"]
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+
+        insta::assert_debug_snapshot!(&config.mcp, @r#"
+        McpConfig {
+            enabled: true,
+            path: "/custom-mcp",
+            servers: {
+                "another_stdio": Stdio {
+                    cmd: [
+                        "python",
+                        "-m",
+                        "mcp_server",
+                        "--port",
+                        "3000",
+                    ],
+                },
+                "local_code_interpreter": Stdio {
+                    cmd: [
+                        "/usr/bin/mcp/code_interpreter_server",
+                        "--json-output",
+                    ],
+                },
+                "sse_api": Sse(
+                    SseConfig {
+                        sse_endpoint: Url {
+                            scheme: "http",
+                            cannot_be_a_base: false,
+                            username: "",
+                            password: None,
+                            host: Some(
+                                Domain(
+                                    "sse-api.internal",
+                                ),
+                            ),
+                            port: Some(
+                                8080,
+                            ),
+                            path: "/events",
+                            query: None,
+                            fragment: None,
+                        },
+                        message_endpoint: None,
+                        tls: None,
+                    },
+                ),
+                "streaming_api": StreamableHttp(
+                    StreamableHttpConfig {
+                        uri: Url {
+                            scheme: "http",
+                            cannot_be_a_base: false,
+                            username: "",
+                            password: None,
+                            host: Some(
+                                Domain(
+                                    "streaming-api.internal",
+                                ),
+                            ),
+                            port: Some(
+                                8080,
+                            ),
+                            path: "/",
+                            query: None,
+                            fragment: None,
+                        },
+                        tls: None,
+                    },
+                ),
             },
         }
         "#);
