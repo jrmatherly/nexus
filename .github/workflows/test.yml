@@ -250,7 +250,7 @@ jobs:
           echo "Hydra containers stopped and volumes cleaned"
   docker-dev:
     if: github.ref != 'refs/heads/main'
-    needs: [check-rust-format, check-toml-format, unit-tests]
+    needs: [check-rust-format, check-toml-format]
     runs-on: depot-ubuntu-24.04-8
     permissions:
       packages: write
