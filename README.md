@@ -1,7 +1,3 @@
-# Nexus - The AI Router
-
-Plug in all your MCP servers, APIs, and LLM providers. Route everything through a unified endpoint. Aggregate, govern, and dominate your AI stack.
-
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="[./light](https://github.com/user-attachments/assets/67aedc47-6afc-4b49-8863-6424d7e16ee0)">
   <img alt="Nexus logo" src="https://github.com/user-attachments/assets/67aedc47-6afc-4b49-8863-6424d7e16ee0">
@@ -11,6 +7,11 @@ Plug in all your MCP servers, APIs, and LLM providers. Route everything through 
   <source media="(prefers-color-scheme: dark)" srcset="[./dark](https://github.com/user-attachments/assets/40352c4f-0376-44d2-85c0-9d72991f2950)">
   <img alt="Nexus logo" src="https://github.com/user-attachments/assets/40352c4f-0376-44d2-85c0-9d72991f2950">
 </picture>
+
+<p align="center">
+  Plug in all your MCP servers, APIs, and LLM providers. Route everything through a unified endpoint. <br />
+  Aggregate, govern, and dominate your AI stack.
+</p>
 
 ## Features
 
