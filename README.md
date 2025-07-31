@@ -1,12 +1,10 @@
+<div align="center">
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="[./light](https://github.com/user-attachments/assets/67aedc47-6afc-4b49-8863-6424d7e16ee0)">
-  <img alt="Nexus logo" src="https://github.com/user-attachments/assets/67aedc47-6afc-4b49-8863-6424d7e16ee0">
+  <source width="600" height="244" srcset="https://github.com/user-attachments/assets/9ca64651-b601-45e3-8ba1-f7bfb91625ab" media="(prefers-color-scheme: dark)">
+  <source width="600" height="244" srcset="https://github.com/user-attachments/assets/5ee33450-f9ee-4e47-b0ed-0d302110c4ce"" media="(prefers-color-scheme: light)">
+  <img src="https://github.com/user-attachments/assets/9ca64651-b601-45e3-8ba1-f7bfb91625ab" alt="Nexus logo">
 </picture>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="[./dark](https://github.com/user-attachments/assets/40352c4f-0376-44d2-85c0-9d72991f2950)">
-  <img alt="Nexus logo" src="https://github.com/user-attachments/assets/40352c4f-0376-44d2-85c0-9d72991f2950">
-</picture>
+</div>
 
 <p align="center">
   Plug in all your MCP servers, APIs, and LLM providers. Route everything through a unified endpoint. <br />
