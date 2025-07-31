@@ -8,7 +8,7 @@
 
 <p align="center">
   Plug in all your MCP servers, APIs, and LLM providers. Route everything through a unified endpoint. <br />
-  Aggregate, govern, and dominate your AI stack.
+  Aggregate, govern, and control your AI stack.
 </p>
 
 ## Features
