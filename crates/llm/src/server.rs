@@ -1,59 +1,178 @@
-use anyhow::Result;
-use config::LlmConfig;
+use std::sync::Arc;
+use std::time::Duration;
 
-use crate::messages::{ChatChoice, ChatCompletionRequest, ChatCompletionResponse, ChatMessage, ModelsResponse, Usage};
+use config::{LlmConfig, LlmProvider};
+use futures::{
+    lock::Mutex,
+    stream::{FuturesUnordered, StreamExt},
+};
+use itertools::Itertools;
+use mini_moka::sync::Cache;
 
-pub(crate) struct LlmServer;
+use crate::{
+    error::LlmError,
+    messages::{ChatCompletionRequest, ChatCompletionResponse, ModelsResponse, ObjectType},
+    provider::{Provider, anthropic::AnthropicProvider, google::GoogleProvider, openai::OpenAIProvider},
+};
+
+// Cache models for 5 minutes
+const MODELS_CACHE_DURATION: Duration = Duration::from_secs(300);
+
+#[derive(Clone)]
+pub(crate) struct LlmServer {
+    shared: Arc<LlmServerInner>,
+}
+
+struct LlmServerInner {
+    providers: Vec<Box<dyn Provider>>,
+    models_cache: Cache<(), ModelsResponse>,
+    refresh_lock: Mutex<()>,
+}
 
 impl LlmServer {
-    pub async fn new(_: LlmConfig) -> Result<Self> {
-        Ok(Self)
+    pub async fn new(config: LlmConfig) -> crate::Result<Self> {
+        log::debug!("Initializing LLM server with {} providers", config.providers.len());
+        let mut providers = Vec::with_capacity(config.providers.len());
+
+        for (name, provider_config) in config.providers.into_iter() {
+            log::debug!("Initializing provider: {name}");
+
+            match provider_config {
+                LlmProvider::Openai(config) => {
+                    let provider = Box::new(OpenAIProvider::new(name.clone(), config)?);
+                    providers.push(provider as Box<dyn Provider>)
+                }
+                LlmProvider::Anthropic(config) => {
+                    let provider = Box::new(AnthropicProvider::new(name.clone(), config)?);
+                    providers.push(provider as Box<dyn Provider>)
+                }
+                LlmProvider::Google(config) => {
+                    let provider = Box::new(GoogleProvider::new(name.clone(), config)?);
+                    providers.push(provider as Box<dyn Provider>)
+                }
+            }
+        }
+
+        log::debug!("LLM server initialized with {} active providers", providers.len());
+
+        // Create cache with TTL
+        let models_cache = Cache::builder().time_to_live(MODELS_CACHE_DURATION).build();
+
+        Ok(Self {
+            shared: Arc::new(LlmServerInner {
+                providers,
+                models_cache,
+                refresh_lock: Mutex::new(()),
+            }),
+        })
     }
 
     /// Process a chat completion request.
-    pub async fn completions(&self, request: ChatCompletionRequest) -> Result<ChatCompletionResponse> {
-        let mut choices = Vec::new();
-
-        for (index, message) in request.messages.into_iter().enumerate() {
-            let choice = ChatChoice {
-                index: index as u32,
-                message,
-                finish_reason: "stop".to_string(),
-            };
-
-            choices.push(choice);
+    pub async fn completions(&self, mut request: ChatCompletionRequest) -> crate::Result<ChatCompletionResponse> {
+        // Check if streaming was requested
+        if request.stream.unwrap_or(false) {
+            return Err(LlmError::StreamingNotSupported);
         }
 
-        let response = ChatChoice {
-            index: 1,
-            message: ChatMessage {
-                role: "assistant".to_string(),
-                content: "Hello, world!".to_string(),
-            },
-            finish_reason: "stop".to_string(),
+        // Extract provider name from the model string (format: "provider/model")
+        let Some((provider_name, model_name)) = request.model.split_once('/') else {
+            return Err(LlmError::InvalidModelFormat(request.model.clone()));
         };
 
-        choices.push(response);
+        let Some(provider) = self.get_provider(provider_name) else {
+            log::error!(
+                "Provider '{provider_name}' not found. Available providers: [{providers}]",
+                providers = self.shared.providers.iter().map(|p| p.name()).join(", ")
+            );
 
-        Ok(ChatCompletionResponse {
-            id: "chatcmpl-123".to_string(),
-            object: "chat.completion".to_string(),
-            created: 1677651200,
-            model: request.model.clone(),
-            choices,
-            usage: Usage {
-                prompt_tokens: 10,
-                completion_tokens: 5,
-                total_tokens: 15,
-            },
-        })
+            return Err(LlmError::ProviderNotFound(provider_name.to_string()));
+        };
+
+        // Store the original model name before stripping the prefix
+        let original_model = request.model.clone();
+        request.model = model_name.to_string();
+
+        let mut response = provider.chat_completion(request).await?;
+
+        // Restore the full model name with provider prefix in the response
+        response.model = original_model;
+
+        Ok(response)
     }
 
     /// List available models.
-    pub async fn list_models(&self) -> Result<ModelsResponse> {
-        Ok(ModelsResponse {
-            object: "list".to_string(),
-            data: Vec::new(),
-        })
+    pub async fn list_models(&self) -> crate::Result<ModelsResponse> {
+        // Check cache first
+        if let Some(cached) = self.shared.models_cache.get(&()) {
+            log::debug!("Returning cached models (cache hit)");
+            return Ok(cached);
+        }
+
+        let _guard = self.shared.refresh_lock.lock().await;
+
+        if let Some(cached) = self.shared.models_cache.get(&()) {
+            log::debug!("Returning cached models (cache hit)");
+            return Ok(cached);
+        }
+
+        log::debug!(
+            "Cache miss, fetching models from {} providers",
+            self.shared.providers.len()
+        );
+
+        // Create futures for fetching models from each provider concurrently
+        let mut model_futures = FuturesUnordered::new();
+
+        for provider in &self.shared.providers {
+            let provider_name = provider.name().to_string();
+            let provider_ref = provider.as_ref();
+
+            model_futures.push(async move {
+                log::debug!("Fetching models from provider: {provider_name}");
+
+                let models = match provider_ref.list_models().await {
+                    Ok(models) => models,
+                    Err(e) => {
+                        log::warn!("Failed to list models from provider {provider_name}: {e}");
+
+                        return Err(e);
+                    }
+                };
+
+                // Prefix model IDs with provider name for clarity
+                let prefixed_models: Vec<_> = models
+                    .into_iter()
+                    .map(|mut model| {
+                        model.id = format!("{}/{}", provider_name, model.id);
+                        model
+                    })
+                    .collect();
+
+                Ok(prefixed_models)
+            });
+        }
+
+        // Collect results from all providers concurrently
+        let mut all_models = Vec::new();
+        while let Some(result) = model_futures.next().await {
+            if let Ok(models) = result {
+                all_models.extend(models);
+            }
+            // Errors are already logged above, so we just skip them
+        }
+
+        let response = ModelsResponse {
+            object: ObjectType::List,
+            data: all_models,
+        };
+
+        // Cache the response
+        self.shared.models_cache.insert((), response.clone());
+
+        Ok(response)
+    }
+
+    fn get_provider(&self, name: &str) -> Option<&dyn Provider> {
+        self.shared.providers.iter().find(|p| p.name() == name).map(|v| &**v)
     }
 }

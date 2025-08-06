@@ -8,6 +8,7 @@ keywords.workspace = true
 repository.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 axum = { workspace = true }
 axum-server = { workspace = true }
 base64.workspace = true
@@ -19,6 +20,7 @@ futures.workspace = true
 futures-util.workspace = true
 indoc.workspace = true
 insta.workspace = true
+itertools.workspace = true
 log.workspace = true
 logforth = { workspace = true, features = ["colored"] }
 reqwest = { workspace = true, features = ["json"] }

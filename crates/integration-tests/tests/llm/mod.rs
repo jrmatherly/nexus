@@ -1,169 +1,155 @@
-use indoc::indoc;
-use integration_tests::TestServer;
+use integration_tests::{
+    TestServer,
+    llms::{AnthropicMock, GoogleMock, OpenAIMock},
+};
 use serde_json::json;
 
-#[tokio::test]
-async fn list_models() {
-    let config = indoc! {r#"
-        [llm.providers.test_openai]
-        type = "openai"
-        api_key = "test-key"
-    "#};
+mod anthropic;
+mod error_handling;
+mod google;
+mod openai;
 
-    let server = TestServer::builder().build(config).await;
+#[tokio::test]
+async fn multiple_providers_work_together() {
+    let openai_provider = OpenAIMock::new("openai");
+    let anthropic_provider = AnthropicMock::new("anthropic");
+    let google_provider = GoogleMock::new("google");
+
+    let mut builder = TestServer::builder();
+    builder.spawn_llm(openai_provider).await;
+    builder.spawn_llm(anthropic_provider).await;
+    builder.spawn_llm(google_provider).await;
+
+    let server = builder.build("").await;
     let llm = server.llm_client("/llm");
 
-    let body = llm.list_models().await;
+    // Test listing models from both providers
+    let models_body = llm.list_models().await;
 
-    // Since created is a timestamp, let's normalize it
-    let mut normalized_body = body.clone();
-    if let Some(data) = normalized_body.get_mut("data").and_then(|d| d.as_array_mut()) {
-        for item in data {
-            if let Some(obj) = item.as_object_mut() {
-                obj.insert("created".to_string(), serde_json::json!("[created]"));
-            }
-        }
-    }
+    // Extract and normalize model IDs for snapshot
+    let model_ids: Vec<String> = models_body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap().to_string())
+        .collect();
 
-    insta::assert_json_snapshot!(normalized_body, @r#"
-    {
-      "object": "list",
-      "data": []
-    }
+    insta::assert_debug_snapshot!(model_ids, @r#"
+    [
+        "anthropic/claude-3-5-sonnet-20241022",
+        "anthropic/claude-3-5-haiku-20241022",
+        "anthropic/claude-3-opus-20240229",
+        "anthropic/claude-3-sonnet-20240229",
+        "anthropic/claude-3-haiku-20240307",
+        "google/gemini-1.5-flash",
+        "google/gemini-1.5-pro",
+        "google/gemini-pro",
+        "openai/gpt-3.5-turbo",
+        "openai/gpt-4",
+        "openai/gpt-4-turbo",
+    ]
     "#);
-}
 
-#[tokio::test]
-async fn custom_path() {
-    let config = indoc! {r#"
-        [llm]
-        path = "/custom"
-
-        [llm.providers.test_openai]
-        type = "openai"
-        api_key = "test-key"
-    "#};
-
-    let server = TestServer::builder().build(config).await;
-    let llm = server.llm_client("/custom");
-
-    let body = llm.list_models().await;
-
-    // Since created is a timestamp, let's normalize it
-    let mut normalized_body = body.clone();
-    if let Some(data) = normalized_body.get_mut("data").and_then(|d| d.as_array_mut()) {
-        for item in data {
-            if let Some(obj) = item.as_object_mut() {
-                obj.insert("created".to_string(), serde_json::json!("[created]"));
-            }
-        }
-    }
-
-    insta::assert_json_snapshot!(normalized_body, @r#"
-    {
-      "object": "list",
-      "data": []
-    }
-    "#);
-}
-
-#[tokio::test]
-async fn chat_completions() {
-    let config = indoc! {r#"
-        [llm.providers.test_openai]
-        type = "openai"
-        api_key = "test-key"
-    "#};
-
-    let server = TestServer::builder().build(config).await;
-    let llm = server.llm_client("/llm");
-
-    let request = json!({
-        "model": "gpt-3.5-turbo",
-        "messages": [
-            {
-                "role": "user",
-                "content": "Hello!"
-            }
-        ]
+    // Test OpenAI completion
+    let openai_request = json!({
+        "model": "openai/gpt-3.5-turbo",
+        "messages": [{"role": "user", "content": "Hello from OpenAI"}]
     });
 
-    let body = llm.completions(request).await;
+    let openai_body = llm.completions(openai_request).await;
 
-    insta::assert_json_snapshot!(body, @r#"
+    insta::assert_json_snapshot!(openai_body, {
+        ".id" => "chatcmpl-test-[uuid]"
+    }, @r#"
     {
-      "id": "chatcmpl-123",
+      "id": "chatcmpl-test-[uuid]",
       "object": "chat.completion",
       "created": 1677651200,
-      "model": "gpt-3.5-turbo",
+      "model": "openai/gpt-3.5-turbo",
       "choices": [
         {
           "index": 0,
           "message": {
-            "role": "user",
-            "content": "Hello!"
-          },
-          "finish_reason": "stop"
-        },
-        {
-          "index": 1,
-          "message": {
             "role": "assistant",
-            "content": "Hello, world!"
+            "content": "Hello! I'm a test LLM assistant. How can I help you today?"
           },
           "finish_reason": "stop"
         }
       ],
       "usage": {
         "prompt_tokens": 10,
-        "completion_tokens": 5,
-        "total_tokens": 15
+        "completion_tokens": 15,
+        "total_tokens": 25
       }
     }
     "#);
-}
 
-#[tokio::test]
-async fn chat_completions_simple() {
-    let config = indoc! {r#"
-        [llm.providers.test_openai]
-        type = "openai"
-        api_key = "test-key"
-    "#};
+    // Test Anthropic completion
+    let anthropic_request = json!({
+        "model": "anthropic/claude-3-5-sonnet-20241022",
+        "messages": [{"role": "user", "content": "Hello from Anthropic"}]
+    });
 
-    let server = TestServer::builder().build(config).await;
-    let llm = server.llm_client("/llm");
+    let anthropic_body = llm.completions(anthropic_request).await;
 
-    let body = llm.simple_completion("gpt-3.5-turbo", "Hello!").await;
-
-    insta::assert_json_snapshot!(body, @r#"
+    insta::assert_json_snapshot!(anthropic_body, {
+        ".id" => "msg_[id]",
+        ".created" => "[created]"
+    }, @r#"
     {
-      "id": "chatcmpl-123",
+      "id": "msg_[id]",
       "object": "chat.completion",
-      "created": 1677651200,
-      "model": "gpt-3.5-turbo",
+      "created": "[created]",
+      "model": "anthropic/claude-3-5-sonnet-20241022",
       "choices": [
         {
           "index": 0,
           "message": {
-            "role": "user",
-            "content": "Hello!"
-          },
-          "finish_reason": "stop"
-        },
-        {
-          "index": 1,
-          "message": {
             "role": "assistant",
-            "content": "Hello, world!"
+            "content": "Test response to: Hello from Anthropic"
           },
           "finish_reason": "stop"
         }
       ],
       "usage": {
         "prompt_tokens": 10,
-        "completion_tokens": 5,
-        "total_tokens": 15
+        "completion_tokens": 15,
+        "total_tokens": 25
+      }
+    }
+    "#);
+
+    // Test Google completion
+    let google_request = json!({
+        "model": "google/gemini-1.5-flash",
+        "messages": [{"role": "user", "content": "Hello from Google"}]
+    });
+
+    let google_body = llm.completions(google_request).await;
+
+    insta::assert_json_snapshot!(google_body, {
+        ".id" => "[id]",
+        ".created" => "[created]"
+    }, @r#"
+    {
+      "id": "[id]",
+      "object": "chat.completion",
+      "created": "[created]",
+      "model": "google/gemini-1.5-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Hello! I'm Gemini, a test assistant. How can I help you today?"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 10,
+        "completion_tokens": 15,
+        "total_tokens": 25
       }
     }
     "#);
