@@ -529,7 +529,7 @@ impl TestServerBuilder {
             [llm.providers.{provider_name}]
             type = "openai"
             api_key = "test-key"
-            api_url = "{}/v1"
+            base_url = "{}/v1"
         "#, llm_server.base_url()};
 
         self.config.push_str(&config);

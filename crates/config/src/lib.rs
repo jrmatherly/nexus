@@ -1785,13 +1785,13 @@ mod tests {
                 "anthropic": Anthropic(
                     AnthropicConfig {
                         api_key: SecretBox<str>([REDACTED]),
-                        api_url: None,
+                        base_url: None,
                     },
                 ),
                 "openai": Openai(
                     OpenAiConfig {
                         api_key: SecretBox<str>([REDACTED]),
-                        api_url: None,
+                        base_url: None,
                     },
                 ),
             },

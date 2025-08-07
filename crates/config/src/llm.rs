@@ -48,9 +48,9 @@ pub enum LlmProvider {
 pub struct OpenAiConfig {
     /// API key for OpenAI (supports environment variable interpolation).
     pub api_key: SecretString,
-    /// Custom API URL (defaults to https://api.openai.com/v1).
+    /// Custom base URL (defaults to https://api.openai.com/v1).
     #[serde(default)]
-    pub api_url: Option<String>,
+    pub base_url: Option<String>,
 }
 
 /// Anthropic provider configuration.
@@ -59,9 +59,9 @@ pub struct OpenAiConfig {
 pub struct AnthropicConfig {
     /// API key for Anthropic (supports environment variable interpolation).
     pub api_key: SecretString,
-    /// Custom API URL (defaults to https://api.anthropic.com/v1).
+    /// Custom base URL (defaults to https://api.anthropic.com/v1).
     #[serde(default)]
-    pub api_url: Option<String>,
+    pub base_url: Option<String>,
 }
 
 /// Google provider configuration.
@@ -70,9 +70,9 @@ pub struct AnthropicConfig {
 pub struct GoogleConfig {
     /// API key for Google (supports environment variable interpolation).
     pub api_key: SecretString,
-    /// Custom API URL (defaults to https://generativelanguage.googleapis.com/v1beta).
+    /// Custom base URL (defaults to https://generativelanguage.googleapis.com/v1beta).
     #[serde(default)]
-    pub api_url: Option<String>,
+    pub base_url: Option<String>,
 }
 
 #[cfg(test)]
@@ -115,7 +115,7 @@ mod tests {
                 "openai": Openai(
                     OpenAiConfig {
                         api_key: SecretBox<str>([REDACTED]),
-                        api_url: None,
+                        base_url: None,
                     },
                 ),
             },
@@ -144,7 +144,7 @@ mod tests {
                 "anthropic": Anthropic(
                     AnthropicConfig {
                         api_key: SecretBox<str>([REDACTED]),
-                        api_url: None,
+                        base_url: None,
                     },
                 ),
             },
@@ -170,7 +170,7 @@ mod tests {
                 "google": Google(
                     GoogleConfig {
                         api_key: SecretBox<str>([REDACTED]),
-                        api_url: None,
+                        base_url: None,
                     },
                 ),
             },
@@ -207,19 +207,19 @@ mod tests {
                 "anthropic": Anthropic(
                     AnthropicConfig {
                         api_key: SecretBox<str>([REDACTED]),
-                        api_url: None,
+                        base_url: None,
                     },
                 ),
                 "google": Google(
                     GoogleConfig {
                         api_key: SecretBox<str>([REDACTED]),
-                        api_url: None,
+                        base_url: None,
                     },
                 ),
                 "openai": Openai(
                     OpenAiConfig {
                         api_key: SecretBox<str>([REDACTED]),
-                        api_url: None,
+                        base_url: None,
                     },
                 ),
             },
@@ -294,7 +294,7 @@ mod tests {
                 "openai": Openai(
                     OpenAiConfig {
                         api_key: SecretBox<str>([REDACTED]),
-                        api_url: None,
+                        base_url: None,
                     },
                 ),
             },

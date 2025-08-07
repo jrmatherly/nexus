@@ -323,8 +323,8 @@ Configure one or more LLM providers in your `nexus.toml`:
 [llm.providers.openai]
 type = "openai"
 api_key = "{{ env.OPENAI_API_KEY }}"
-# Optional: Use a custom API URL (for Azure OpenAI, proxies, or compatible APIs)
-api_url = "https://api.openai.com/v1"  # Default
+# Optional: Use a custom base URL (for Azure OpenAI, proxies, or compatible APIs)
+base_url = "https://api.openai.com/v1"  # Default
 ```
 
 ##### Anthropic Provider
@@ -333,8 +333,8 @@ api_url = "https://api.openai.com/v1"  # Default
 [llm.providers.anthropic]
 type = "anthropic"
 api_key = "{{ env.ANTHROPIC_API_KEY }}"
-# Optional: Use a custom API URL
-api_url = "https://api.anthropic.com/v1"  # Default
+# Optional: Use a custom base URL
+base_url = "https://api.anthropic.com/v1"  # Default
 ```
 
 ##### Google Provider
@@ -343,8 +343,8 @@ api_url = "https://api.anthropic.com/v1"  # Default
 [llm.providers.google]
 type = "google"
 api_key = "{{ env.GOOGLE_API_KEY }}"
-# Optional: Use a custom API URL
-api_url = "https://generativelanguage.googleapis.com/v1beta"  # Default
+# Optional: Use a custom base URL
+base_url = "https://generativelanguage.googleapis.com/v1beta"  # Default
 ```
 
 #### Multiple Provider Configuration
@@ -361,7 +361,7 @@ api_key = "{{ env.OPENAI_PRIMARY_KEY }}"
 [llm.providers.openai_secondary]
 type = "openai"
 api_key = "{{ env.OPENAI_SECONDARY_KEY }}"
-api_url = "https://my-azure-instance.openai.azure.com/v1"
+base_url = "https://my-azure-instance.openai.azure.com/v1"
 
 # Anthropic
 [llm.providers.claude]

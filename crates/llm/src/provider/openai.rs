@@ -49,9 +49,9 @@ impl OpenAIProvider {
                 LlmError::InternalError(None)
             })?;
 
-        // Use custom API URL if provided, otherwise use default
+        // Use custom base URL if provided, otherwise use default
         let base_url = config
-            .api_url
+            .base_url
             .clone()
             .unwrap_or_else(|| DEFAULT_OPENAI_API_URL.to_string());
 

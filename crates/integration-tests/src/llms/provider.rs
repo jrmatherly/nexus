@@ -41,7 +41,7 @@ pub fn generate_config_for_type(provider_type: ProviderType, config: &LlmProvide
             [llm.providers.{}]
             type = "openai"
             api_key = "test-key"
-            api_url = "http://{}/v1"
+            base_url = "http://{}/v1"
         "#, config.name, config.address},
 
         ProviderType::Anthropic => formatdoc! {r#"
@@ -49,7 +49,7 @@ pub fn generate_config_for_type(provider_type: ProviderType, config: &LlmProvide
             [llm.providers.{}]
             type = "anthropic"
             api_key = "test-key"
-            api_url = "http://{}/v1"
+            base_url = "http://{}/v1"
         "#, config.name, config.address},
 
         ProviderType::Google => formatdoc! {r#"
@@ -57,7 +57,7 @@ pub fn generate_config_for_type(provider_type: ProviderType, config: &LlmProvide
             [llm.providers.{}]
             type = "google"
             api_key = "test-key"
-            api_url = "http://{}/v1beta"
+            base_url = "http://{}/v1beta"
         "#, config.name, config.address},
     }
 }

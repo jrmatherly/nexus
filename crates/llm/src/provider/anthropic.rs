@@ -65,7 +65,7 @@ impl AnthropicProvider {
             })?;
 
         let base_url = config
-            .api_url
+            .base_url
             .clone()
             .unwrap_or_else(|| DEFAULT_ANTHROPIC_API_URL.to_string());
 
