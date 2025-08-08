@@ -12,10 +12,15 @@ anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 config.workspace = true
+futures.workspace = true
+itertools.workspace = true
+log.workspace = true
+mini-moka.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 uuid.workspace = true
 
 [lints]

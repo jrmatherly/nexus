@@ -14,6 +14,7 @@
 ## Features
 
 - **MCP Server Aggregation**: Connect multiple MCP servers (STDIO, SSE, HTTP) through a single endpoint
+- **LLM Provider Routing**: Unified interface for OpenAI, Anthropic, Google, and other LLM providers
 - **Context-Aware Tool Search**: Intelligent fuzzy search across all connected tools using natural language queries
 - **Protocol Support**: Supports STDIO (subprocess), SSE (Server-Sent Events), and streamable HTTP MCP servers
 - **Flexible Configuration**: TOML-based configuration with environment variable substitution
@@ -87,6 +88,7 @@ services:
 Create a `nexus.toml` file to configure Nexus:
 
 ```toml
+# MCP Server configuration
 [mcp.servers.github]
 url = "https://api.githubcopilot.com/mcp/"
 auth.token = "{{ env.GITHUB_TOKEN }}"
@@ -98,6 +100,15 @@ cmd = ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/Users/YOUR_USER
 cmd = ["python", "-m", "mcp_server"]
 env = { PYTHONPATH = "/opt/mcp" }
 cwd = "/workspace"
+
+# LLM Provider configuration
+[llm.providers.openai]
+type = "openai"
+api_key = "{{ env.OPENAI_API_KEY }}"
+
+[llm.providers.anthropic]
+type = "anthropic"
+api_key = "{{ env.ANTHROPIC_API_KEY }}"
 ```
 
 ### Configuration Options
@@ -282,6 +293,204 @@ client_cert_path = "/path/to/client.pem"
 client_key_path = "/path/to/client.key"
 ```
 
+### LLM Provider Configuration
+
+Nexus provides a unified interface for multiple LLM providers, allowing you to route chat completions through various services with a consistent API.
+
+#### Enabling LLM Routing
+
+```toml
+[llm]
+enabled = true  # Enable LLM functionality (default: true)
+path = "/llm"   # LLM endpoint path (default: "/llm")
+```
+
+#### Supported Providers
+
+Nexus currently supports three major LLM providers:
+
+1. **OpenAI** (including OpenAI-compatible APIs)
+2. **Anthropic** (Claude models)
+3. **Google** (Gemini models)
+
+#### Provider Configuration
+
+Configure one or more LLM providers in your `nexus.toml`:
+
+##### OpenAI Provider
+
+```toml
+[llm.providers.openai]
+type = "openai"
+api_key = "{{ env.OPENAI_API_KEY }}"
+# Optional: Use a custom base URL (for Azure OpenAI, proxies, or compatible APIs)
+base_url = "https://api.openai.com/v1"  # Default
+```
+
+##### Anthropic Provider
+
+```toml
+[llm.providers.anthropic]
+type = "anthropic"
+api_key = "{{ env.ANTHROPIC_API_KEY }}"
+# Optional: Use a custom base URL
+base_url = "https://api.anthropic.com/v1"  # Default
+```
+
+##### Google Provider
+
+```toml
+[llm.providers.google]
+type = "google"
+api_key = "{{ env.GOOGLE_API_KEY }}"
+# Optional: Use a custom base URL
+base_url = "https://generativelanguage.googleapis.com/v1beta"  # Default
+```
+
+#### Multiple Provider Configuration
+
+You can configure multiple instances of the same provider type with different names:
+
+```toml
+# Primary OpenAI account
+[llm.providers.openai_primary]
+type = "openai"
+api_key = "{{ env.OPENAI_PRIMARY_KEY }}"
+
+# Secondary OpenAI account or Azure OpenAI
+[llm.providers.openai_secondary]
+type = "openai"
+api_key = "{{ env.OPENAI_SECONDARY_KEY }}"
+base_url = "https://my-azure-instance.openai.azure.com/v1"
+
+# Anthropic
+[llm.providers.claude]
+type = "anthropic"
+api_key = "{{ env.ANTHROPIC_API_KEY }}"
+
+# Google Gemini
+[llm.providers.gemini]
+type = "google"
+api_key = "{{ env.GOOGLE_API_KEY }}"
+```
+
+#### Using the LLM API
+
+Once configured, you can interact with LLM providers through Nexus's unified API:
+
+##### List Available Models
+
+```bash
+curl http://localhost:8000/llm/models
+```
+
+Response:
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "openai_primary/gpt-4-turbo",
+      "object": "model",
+      "created": 1677651200,
+      "owned_by": "openai"
+    },
+    {
+      "id": "claude/claude-3-5-sonnet-20241022",
+      "object": "model",
+      "created": 1709164800,
+      "owned_by": "anthropic"
+    },
+    {
+      "id": "gemini/gemini-1.5-pro",
+      "object": "model",
+      "created": 1710000000,
+      "owned_by": "google"
+    }
+  ]
+}
+```
+
+##### Chat Completions
+
+Send a chat completion request using the OpenAI-compatible format:
+
+```bash
+curl -X POST http://localhost:8000/llm/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "openai_primary/gpt-4-turbo",
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "Hello, how are you?"}
+    ],
+    "temperature": 0.7,
+    "max_tokens": 150
+  }'
+```
+
+The model name format is `<provider_name>/<model_id>`. Nexus automatically routes the request to the appropriate provider and transforms the request/response as needed.
+
+#### Provider-Specific Considerations
+
+##### OpenAI
+- Supports all standard OpenAI models (GPT-3.5, GPT-4, etc.)
+- Compatible with Azure OpenAI endpoints
+- Supports function calling (when available)
+- Streaming is not yet supported (returns error if `stream: true`)
+
+##### Anthropic
+- System messages are automatically extracted and placed in the `system` field
+- Messages must alternate between user and assistant roles
+- Requires explicit `max_tokens` parameter (defaults to 4096 if not specified)
+- Supports all Claude models (Opus, Sonnet, Haiku)
+
+##### Google
+- Assistant role is automatically mapped to "model" role
+- System messages are placed in the `systemInstruction` field
+- Supports Gemini models
+- Returns appropriate safety ratings when available
+
+#### Rate Limiting for LLM Providers
+
+You can configure rate limits for LLM endpoints:
+
+```toml
+[llm.rate_limits]
+# Overall LLM endpoint rate limit
+limit = 100
+interval = "60s"
+
+# Per-provider rate limits
+[llm.providers.openai_primary.rate_limits]
+limit = 50
+interval = "60s"
+
+[llm.providers.anthropic.rate_limits]
+limit = 30
+interval = "60s"
+```
+
+#### Error Handling
+
+Nexus provides consistent error responses across all providers:
+
+- **400 Bad Request**: Invalid request format or parameters
+- **401 Unauthorized**: Missing or invalid API key
+- **429 Too Many Requests**: Rate limit exceeded
+- **500 Internal Server Error**: Provider API error or network issues
+
+Example error response:
+```json
+{
+  "error": {
+    "message": "Streaming is not yet supported. Please set stream=false or omit the parameter.",
+    "type": "invalid_request_error",
+    "code": 400
+  }
+}
+```
+
 ## Adding to AI Assistants
 
 ### Cursor
@@ -336,6 +545,8 @@ Make sure Nexus is running before starting Claude Code.
 
 ## How It Works
 
+### MCP Tool Aggregation
+
 Nexus provides two main tools to AI assistants:
 
 1. **`search`**: A context-aware tool search that uses fuzzy matching to find relevant tools across all connected MCP servers
@@ -347,6 +558,17 @@ When an AI assistant connects to Nexus, it can:
 3. Execute tools from any connected MCP server
 
 All tools from downstream servers are namespaced with their server name (e.g., `github__search_code`, `filesystem__read_file`).
+
+### LLM Provider Routing
+
+Nexus acts as a unified gateway for multiple LLM providers:
+
+1. **Model Discovery**: Lists all available models from configured providers with consistent naming
+2. **Request Routing**: Automatically routes requests to the correct provider based on model name
+3. **Format Translation**: Converts between OpenAI's API format and provider-specific formats
+4. **Response Normalization**: Returns consistent response format regardless of provider
+
+Models are namespaced with their provider name (e.g., `openai/gpt-4`, `anthropic/claude-3-opus-20240229`).
 
 ### STDIO Server Integration
 

@@ -2809,6 +2809,7 @@ dependencies = [
 name = "integration-tests"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum",
  "axum-server",
  "base64 0.22.1",
@@ -2820,6 +2821,7 @@ dependencies = [
  "futures-util",
  "indoc",
  "insta",
+ "itertools 0.14.0",
  "log",
  "logforth",
  "reqwest",
@@ -3098,10 +3100,15 @@ dependencies = [
  "async-trait",
  "axum",
  "config",
+ "futures",
+ "itertools 0.14.0",
+ "log",
+ "mini-moka",
  "reqwest",
  "secrecy",
  "serde",
  "serde_json",
+ "thiserror 2.0.12",
  "uuid",
 ]
 

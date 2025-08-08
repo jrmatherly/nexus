@@ -93,7 +93,9 @@ impl LogLevel {
             LogLevel::Off => Cow::Borrowed("off"),
             // For other levels, set the default to 'warn' for all crates,
             // but use the selected level for workspace crates
-            level => Cow::Owned(format!("warn,nexus={level},server={level},mcp={level},config={level}")),
+            level => Cow::Owned(format!(
+                "warn,nexus={level},server={level},mcp={level},config={level},llm={level}"
+            )),
         };
 
         EnvFilter::from_str(&filter_str).expect("These all are valid env filters.")

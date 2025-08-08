@@ -1,4 +1,5 @@
 mod downstream;
+pub mod llms;
 pub mod tools;
 
 use std::str::FromStr;
@@ -19,6 +20,7 @@ use server::ServeConfig;
 use tokio::net::TcpListener;
 
 pub use downstream::{ServiceType, TestService, TestTool};
+pub use llms::TestOpenAIServer;
 use tokio_util::sync::CancellationToken;
 
 pub fn get_test_cert_paths() -> (PathBuf, PathBuf) {
@@ -313,7 +315,17 @@ impl LlmTestClient {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), 200);
+        let status = response.status();
+
+        #[allow(clippy::panic)]
+        if status != 200 {
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unable to read error".to_string());
+            panic!("Expected 200 status, got {status}: {error_text}");
+        }
+
         response.json().await.unwrap()
     }
 
@@ -330,6 +342,14 @@ impl LlmTestClient {
         });
 
         self.completions(request).await
+    }
+
+    /// Send a chat completion request and return the raw response (for error testing)
+    pub async fn completions_raw(&self, request: serde_json::Value) -> reqwest::Response {
+        self.client
+            .post(&format!("{}/v1/chat/completions", self.base_path), &request)
+            .await
+            .unwrap()
     }
 }
 
@@ -490,6 +510,32 @@ pub struct TestServerBuilder {
 }
 
 impl TestServerBuilder {
+    /// Spawn a test LLM provider and configure Nexus to connect to it
+    pub async fn spawn_llm(&mut self, provider: impl llms::TestLlmProvider) {
+        let config = Box::new(provider).spawn().await.unwrap();
+        let provider_config_snippet = llms::generate_config_for_type(config.provider_type, &config);
+
+        self.config.push_str(&provider_config_snippet);
+    }
+
+    /// Spawn a test LLM server and configure Nexus to connect to it (legacy method for backward compatibility)
+    pub async fn spawn_llm_server(&mut self, provider_name: &str) -> TestOpenAIServer {
+        let llm_server = TestOpenAIServer::start().await;
+
+        // Add LLM configuration pointing to the test server
+        // Include /v1 in the URL as the OpenAI provider expects this format
+        let config = indoc::formatdoc! {r#"
+
+            [llm.providers.{provider_name}]
+            type = "openai"
+            api_key = "test-key"
+            base_url = "{}/v1"
+        "#, llm_server.base_url()};
+
+        self.config.push_str(&config);
+        llm_server
+    }
+
     pub async fn spawn_service(&mut self, service: TestService) {
         let (listen_addr, ct) = service.spawn().await;
 
