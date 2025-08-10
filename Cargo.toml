@@ -21,7 +21,7 @@ chrono = "0.4.41"
 clap = "4.5.41"
 config = { path = "crates/config" }
 convert_case = "0.8.0"
-ctor = "0.4.2"
+ctor = "0.5.0"
 dashmap = "6.1.0"
 deadpool = { version = "0.12", features = ["managed", "rt_tokio_1"] }
 duration-str = "0.17"
