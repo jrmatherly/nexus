@@ -136,7 +136,16 @@ impl Downstream {
 
                     continue;
                 }
-                Err(err) => return Err(err.1),
+                Err(err) => {
+                    // Log error but allow system to start with remaining healthy servers
+                    log::error!(
+                        "Failed to initialize server '{}': {}. System will continue without this server.",
+                        err.0,
+                        err.1
+                    );
+
+                    continue;
+                }
             };
 
             for mut tool in server_tools {
@@ -156,12 +165,15 @@ impl Downstream {
 
                 // Check for duplicate resource URIs
                 if let Some(existing_server) = resource_to_server.get(&resource.uri) {
-                    return Err(anyhow::anyhow!(
-                        "Duplicate resource URI '{}' found in servers '{}' and '{}'. Resource URIs must be globally unique across all downstream servers.",
+                    // Log warning but don't fail - skip the duplicate resource
+                    log::warn!(
+                        "Duplicate resource URI '{}' found in servers '{}' and '{}'. Skipping resource from '{}'.",
                         resource.uri,
                         existing_server,
+                        server.name(),
                         server.name()
-                    ));
+                    );
+                    continue;
                 }
 
                 resource_to_server.insert(resource.uri.clone(), server.name().to_string());
@@ -175,6 +187,19 @@ impl Downstream {
         tools.sort_unstable_by(|a, b| a.name.cmp(&b.name));
         resources.sort_unstable_by(|a, b| a.uri.cmp(&b.uri));
         prompts.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+
+        // Log warning if no servers were successfully initialized
+        if servers.is_empty() {
+            log::warn!(
+                "No downstream servers were successfully initialized. The MCP router will start but no tools will be available."
+            );
+        } else {
+            log::info!(
+                "Successfully initialized {} out of {} configured downstream server(s)",
+                servers.len(),
+                config.servers.len()
+            );
+        }
 
         Ok(Self {
             servers,

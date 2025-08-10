@@ -379,28 +379,39 @@ async fn stdio_multiple_servers() {
 }
 
 #[tokio::test]
-#[should_panic]
 async fn stdio_server_startup_failure() {
-    // Test that a nonexistent command causes server startup to fail
-    TestServer::builder()
+    // Test that a nonexistent command doesn't prevent server startup (resilience)
+    let server = TestServer::builder()
         .build(indoc! {r#"
             [mcp.servers.bad_stdio]
             cmd = ["nonexistent_command_that_should_fail"]
         "#})
         .await;
+
+    // Server should start successfully despite failing downstream
+    let mcp_client = server.mcp_client("/mcp").await;
+    let tools = mcp_client.list_tools().await;
+
+    // Always exactly 2 tools: search and execute
+    assert_eq!(tools.tools.len(), 2);
 }
 
 #[tokio::test]
-#[should_panic]
 async fn stdio_minimal_config() {
-    // Test that a minimal echo command causes server startup to fail
-    // because echo doesn't provide MCP protocol support
-    TestServer::builder()
+    // Test that echo command (not a valid MCP server) doesn't prevent startup (resilience)
+    let server = TestServer::builder()
         .build(indoc! {r#"
             [mcp.servers.minimal]
             cmd = ["echo", "hello"]
         "#})
         .await;
+
+    // Server should start successfully despite invalid MCP server
+    let mcp_client = server.mcp_client("/mcp").await;
+    let tools = mcp_client.list_tools().await;
+
+    // Always exactly 2 tools: search and execute
+    assert_eq!(tools.tools.len(), 2);
 }
 
 #[tokio::test]
@@ -434,64 +445,100 @@ async fn stdio_complex_command_args() {
 }
 
 #[tokio::test]
-#[should_panic]
 async fn stdio_command_not_found() {
-    // Test that a nonexistent command causes server startup to fail
-    TestServer::builder()
+    // Test that a nonexistent command doesn't prevent server startup (resilience)
+    let server = TestServer::builder()
         .build(indoc! {r#"
             [mcp.servers.nonexistent]
             cmd = ["nonexistent_command_xyz123"]
         "#})
         .await;
+
+    // Server should start successfully despite failing downstream
+    let mcp_client = server.mcp_client("/mcp").await;
+    let tools = mcp_client.list_tools().await;
+
+    // Always exactly 2 tools: search and execute
+    assert_eq!(tools.tools.len(), 2);
+    assert!(tools.tools.iter().any(|t| t.name == "search"));
+    assert!(tools.tools.iter().any(|t| t.name == "execute"));
+
+    // Search should return no results since the nonexistent command failed
+    let search_results = mcp_client.search(&["test"]).await;
+    assert_eq!(search_results.len(), 0);
 }
 
 #[tokio::test]
-#[should_panic]
 async fn stdio_permission_denied() {
-    // Test that a file without execute permissions causes server startup to fail
-    TestServer::builder()
+    // Test that a file without execute permissions doesn't prevent server startup (resilience)
+    let server = TestServer::builder()
         .build(indoc! {r#"
             [mcp.servers.permission_denied]
             cmd = ["/etc/passwd"]
         "#})
         .await;
+
+    // Server should start successfully despite failing downstream
+    let mcp_client = server.mcp_client("/mcp").await;
+    let tools = mcp_client.list_tools().await;
+
+    // Always exactly 2 tools: search and execute
+    assert_eq!(tools.tools.len(), 2);
 }
 
 #[tokio::test]
-#[should_panic]
 async fn stdio_invalid_working_directory() {
-    // Test that an invalid working directory causes server startup to fail
-    TestServer::builder()
+    // Test that an invalid working directory doesn't prevent server startup (resilience)
+    let server = TestServer::builder()
         .build(indoc! {r#"
             [mcp.servers.bad_cwd]
             cmd = ["echo", "hello"]
             cwd = "/nonexistent/directory/path"
         "#})
         .await;
+
+    // Server should start successfully despite failing downstream
+    let mcp_client = server.mcp_client("/mcp").await;
+    let tools = mcp_client.list_tools().await;
+
+    // Always exactly 2 tools: search and execute
+    assert_eq!(tools.tools.len(), 2);
 }
 
 #[tokio::test]
-#[should_panic]
 async fn stdio_process_crashes_early() {
-    // Test that a command that exits immediately with an error causes server startup to fail
-    TestServer::builder()
+    // Test that a command that exits immediately doesn't prevent server startup (resilience)
+    let server = TestServer::builder()
         .build(indoc! {r#"
             [mcp.servers.crash_early]
             cmd = ["false"]
         "#})
         .await;
+
+    // Server should start successfully despite failing downstream
+    let mcp_client = server.mcp_client("/mcp").await;
+    let tools = mcp_client.list_tools().await;
+
+    // Always exactly 2 tools: search and execute
+    assert_eq!(tools.tools.len(), 2);
 }
 
 #[tokio::test]
-#[should_panic]
 async fn stdio_invalid_json_from_subprocess() {
-    // Test that a subprocess outputting invalid JSON causes server startup to fail
-    TestServer::builder()
+    // Test that a subprocess outputting invalid JSON doesn't prevent server startup (resilience)
+    let server = TestServer::builder()
         .build(indoc! {r#"
             [mcp.servers.invalid_json]
             cmd = ["echo", "not valid json"]
         "#})
         .await;
+
+    // Server should start successfully despite invalid MCP server
+    let mcp_client = server.mcp_client("/mcp").await;
+    let tools = mcp_client.list_tools().await;
+
+    // Always exactly 2 tools: search and execute
+    assert_eq!(tools.tools.len(), 2);
 }
 
 #[tokio::test]
