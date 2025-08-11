@@ -1,6 +1,7 @@
 use std::{path::Path, str::FromStr};
 
 use anyhow::bail;
+use indoc::formatdoc;
 use serde::Deserialize;
 use serde_dynamic_string::DynamicString;
 use std::fmt::Write;
@@ -15,7 +16,41 @@ pub fn load<P: AsRef<Path>>(path: P) -> anyhow::Result<Config> {
 
     expand_dynamic_strings(&mut Vec::new(), &mut raw_config)?;
 
-    Ok(Config::deserialize(raw_config)?)
+    let config = Config::deserialize(raw_config)?;
+    validate_has_downstreams(&config)?;
+
+    Ok(config)
+}
+
+pub(crate) fn validate_has_downstreams(config: &Config) -> anyhow::Result<()> {
+    // Check if any downstreams are actually configured (not just enabled)
+    let has_mcp_servers = config.mcp.enabled() && config.mcp.has_servers();
+    let has_llm_providers = config.llm.enabled() && config.llm.has_providers();
+
+    if !has_mcp_servers && !has_llm_providers {
+        let message = formatdoc! {r#"
+            No downstream servers configured. Nexus requires at least one MCP server or LLM provider to function.
+
+            Example configuration:
+
+            For MCP servers:
+
+              [mcp.servers.example]
+              cmd = ["path/to/mcp-server"]
+
+            For LLM providers:
+
+              [llm.providers.openai]
+              type = "openai"
+              api_key = "{{{{ env.OPENAI_API_KEY }}}}"
+
+            See https://nexusrouter.com/docs for more configuration examples.
+        "#};
+
+        bail!(message);
+    }
+
+    Ok(())
 }
 
 fn expand_dynamic_strings<'a>(path: &mut Vec<Result<&'a str, usize>>, value: &'a mut Value) -> anyhow::Result<()> {

@@ -148,6 +148,26 @@ match load_config() {
 
 The Nexus server will always return two tools when listed: `search` and `execute`. If you want to find tools in tests you created, you have to search for them.
 
+### Configuration Validation
+
+Nexus requires at least one downstream service (MCP servers or LLM providers) to be configured when the respective feature is enabled:
+
+- **MCP**: When `mcp.enabled = true`, at least one server must be configured in `mcp.servers`
+- **LLM**: When `llm.enabled = true`, at least one provider must be configured in `llm.providers`
+
+For integration tests that need to test endpoints without actual downstream servers, use dummy configurations:
+
+```toml
+[mcp]
+enabled = true
+
+# Dummy server to ensure MCP endpoint is exposed
+[mcp.servers.dummy]
+cmd = ["echo", "dummy"]
+```
+
+The MCP service will log warnings if configured servers fail to initialize but will continue to expose the endpoint. The LLM service will return an error if no providers can be initialized.
+
 ### File Organization
 Prefer flat module structure:
 

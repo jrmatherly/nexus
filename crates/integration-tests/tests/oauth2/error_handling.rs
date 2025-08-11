@@ -204,6 +204,13 @@ async fn internal_server_error_jwks_failure() {
         [server.oauth.protected_resource]
         resource = "http://127.0.0.1:8080"
         authorization_servers = ["http://127.0.0.1:9999"]
+        
+        [mcp]
+        enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
 
     "#};
 

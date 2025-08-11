@@ -46,6 +46,11 @@ impl Config {
     pub fn load<P: AsRef<Path>>(path: P) -> anyhow::Result<Config> {
         loader::load(path)
     }
+
+    /// Validates that the configuration has at least one functional downstream.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        loader::validate_has_downstreams(self)
+    }
 }
 
 /// HTTP server configuration settings.
@@ -1925,5 +1930,211 @@ mod tests {
         // Test that Default trait gives us true
         let default_config = crate::McpConfig::default();
         assert!(default_config.enable_structured_content);
+    }
+
+    #[test]
+    fn validation_logic_identifies_no_downstreams() {
+        // Test that validation logic correctly identifies when no downstreams are configured
+        // Note: We no longer prevent startup, but the validation logic is still available if needed
+        let config = Config::default();
+        let result = crate::loader::validate_has_downstreams(&config);
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+
+        insta::assert_snapshot!(error_msg, @r#"
+        No downstream servers configured. Nexus requires at least one MCP server or LLM provider to function.
+
+        Example configuration:
+
+        For MCP servers:
+
+          [mcp.servers.example]
+          cmd = ["path/to/mcp-server"]
+
+        For LLM providers:
+
+          [llm.providers.openai]
+          type = "openai"
+          api_key = "{{ env.OPENAI_API_KEY }}"
+
+        See https://nexusrouter.com/docs for more configuration examples.
+        "#);
+    }
+
+    #[test]
+    fn validation_fails_when_both_disabled() {
+        let config_str = indoc! {r#"
+            [mcp]
+            enabled = false
+
+            [llm]
+            enabled = false
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = crate::loader::validate_has_downstreams(&config);
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+
+        insta::assert_snapshot!(error_msg, @r#"
+        No downstream servers configured. Nexus requires at least one MCP server or LLM provider to function.
+
+        Example configuration:
+
+        For MCP servers:
+
+          [mcp.servers.example]
+          cmd = ["path/to/mcp-server"]
+
+        For LLM providers:
+
+          [llm.providers.openai]
+          type = "openai"
+          api_key = "{{ env.OPENAI_API_KEY }}"
+
+        See https://nexusrouter.com/docs for more configuration examples.
+        "#);
+    }
+
+    #[test]
+    fn validation_fails_when_mcp_enabled_but_no_servers() {
+        let config_str = indoc! {r#"
+            [mcp]
+            enabled = true
+
+            [llm]
+            enabled = false
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = crate::loader::validate_has_downstreams(&config);
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+
+        insta::assert_snapshot!(error_msg, @r#"
+        No downstream servers configured. Nexus requires at least one MCP server or LLM provider to function.
+
+        Example configuration:
+
+        For MCP servers:
+
+          [mcp.servers.example]
+          cmd = ["path/to/mcp-server"]
+
+        For LLM providers:
+
+          [llm.providers.openai]
+          type = "openai"
+          api_key = "{{ env.OPENAI_API_KEY }}"
+
+        See https://nexusrouter.com/docs for more configuration examples.
+        "#);
+    }
+
+    #[test]
+    fn validation_fails_when_llm_enabled_but_no_providers() {
+        let config_str = indoc! {r#"
+            [mcp]
+            enabled = false
+
+            [llm]
+            enabled = true
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = crate::loader::validate_has_downstreams(&config);
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+
+        insta::assert_snapshot!(error_msg, @r#"
+        No downstream servers configured. Nexus requires at least one MCP server or LLM provider to function.
+
+        Example configuration:
+
+        For MCP servers:
+
+          [mcp.servers.example]
+          cmd = ["path/to/mcp-server"]
+
+        For LLM providers:
+
+          [llm.providers.openai]
+          type = "openai"
+          api_key = "{{ env.OPENAI_API_KEY }}"
+
+        See https://nexusrouter.com/docs for more configuration examples.
+        "#);
+    }
+
+    #[test]
+    fn validation_passes_with_mcp_server() {
+        let config_str = indoc! {r#"
+            [mcp.servers.test]
+            cmd = ["echo", "test"]
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = crate::loader::validate_has_downstreams(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validation_passes_with_llm_provider() {
+        let config_str = indoc! {r#"
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = crate::loader::validate_has_downstreams(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validation_passes_with_both_mcp_and_llm() {
+        let config_str = indoc! {r#"
+            [mcp.servers.test]
+            cmd = ["echo", "test"]
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = crate::loader::validate_has_downstreams(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validation_passes_when_mcp_disabled_but_llm_has_providers() {
+        let config_str = indoc! {r#"
+            [mcp]
+            enabled = false
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = crate::loader::validate_has_downstreams(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validation_passes_when_llm_disabled_but_mcp_has_servers() {
+        let config_str = indoc! {r#"
+            [mcp.servers.test]
+            cmd = ["echo", "test"]
+
+            [llm]
+            enabled = false
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = crate::loader::validate_has_downstreams(&config);
+        assert!(result.is_ok());
     }
 }

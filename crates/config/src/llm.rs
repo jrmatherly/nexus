@@ -11,7 +11,7 @@ use serde::Deserialize;
 #[serde(default, deny_unknown_fields)]
 pub struct LlmConfig {
     /// Whether the LLM functionality is enabled.
-    pub enabled: bool,
+    enabled: bool,
 
     /// The path where the LLM endpoints will be mounted.
     pub path: Cow<'static, str>,
@@ -27,6 +27,18 @@ impl Default for LlmConfig {
             path: Cow::Borrowed("/llm"),
             providers: BTreeMap::new(),
         }
+    }
+}
+
+impl LlmConfig {
+    /// Whether the LLM functionality is enabled.
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Whether there are any LLM providers configured.
+    pub fn has_providers(&self) -> bool {
+        !self.providers.is_empty()
     }
 }
 

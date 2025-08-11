@@ -14,7 +14,7 @@ use crate::RateLimitQuota;
 #[serde(default, deny_unknown_fields)]
 pub struct McpConfig {
     /// Whether MCP is enabled or disabled.
-    pub enabled: bool,
+    enabled: bool,
     /// The path for MCP endpoint.
     pub path: String,
     /// Configuration for downstream connection caching.
@@ -25,6 +25,18 @@ pub struct McpConfig {
     /// When true (default), the search tool uses the `structuredContent` field.
     /// When false, uses legacy `content` field with Content::json objects.
     pub enable_structured_content: bool,
+}
+
+impl McpConfig {
+    /// Whether MCP is enabled or not.
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Whether there are any MCP servers configured.
+    pub fn has_servers(&self) -> bool {
+        !self.servers.is_empty()
+    }
 }
 
 /// Configuration for an individual MCP server.

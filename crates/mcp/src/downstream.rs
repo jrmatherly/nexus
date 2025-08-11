@@ -188,15 +188,18 @@ impl Downstream {
         resources.sort_unstable_by(|a, b| a.uri.cmp(&b.uri));
         prompts.sort_unstable_by(|a, b| a.name.cmp(&b.name));
 
-        // Log warning if no servers were successfully initialized
-        if servers.is_empty() {
-            log::warn!(
-                "No downstream servers were successfully initialized. The MCP router will start but no tools will be available."
-            );
-        } else {
-            log::info!(
+        // Log initialization results
+        if !servers.is_empty() {
+            log::debug!(
                 "Successfully initialized {} out of {} configured downstream server(s)",
                 servers.len(),
+                config.servers.len()
+            );
+        } else if !config.servers.is_empty() {
+            // Servers were configured but none initialized successfully
+            log::warn!(
+                "No MCP servers successfully initialized. {} server(s) were configured but all failed to start. \
+                The MCP endpoint will be exposed but no tools will be available.",
                 config.servers.len()
             );
         }

@@ -72,6 +72,10 @@ async fn endpoint_not_found_without_oauth() {
     let config = indoc! {r#"
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -97,6 +101,10 @@ async fn endpoint_public_access() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -136,6 +144,10 @@ async fn endpoint_with_tls() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -168,6 +180,10 @@ async fn endpoint_different_paths() {
         [mcp]
         enabled = true
         path = "/custom-mcp"
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
