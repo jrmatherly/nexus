@@ -199,7 +199,7 @@ impl LlmServer {
                 let prefixed_models: Vec<_> = models
                     .into_iter()
                     .map(|mut model| {
-                        model.id = format!("{}/{}", provider_name, model.id);
+                        model.id = format!("{provider_name}/{}", model.id);
                         model
                     })
                     .collect();

@@ -4,6 +4,7 @@ mod llm;
 mod oauth2;
 mod prompts_resources;
 mod rate_limiting;
+mod resilience;
 mod sse;
 mod stdio;
 mod streamable_http;

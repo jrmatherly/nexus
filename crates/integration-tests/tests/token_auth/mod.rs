@@ -196,23 +196,3 @@ async fn multiple_services_with_different_tokens() {
 
     mcp_client.disconnect().await;
 }
-
-#[tokio::test]
-#[should_panic]
-async fn startup_fails_with_invalid_downstream_auth() {
-    let config = indoc! {r#"
-        [mcp]
-        enabled = true
-    "#};
-
-    let mut test_service = TestService::streamable_http("auth_service".to_string())
-        .with_required_auth_token("correct_token".to_string())
-        .with_auth_token("wrong_token".to_string());
-
-    test_service.add_tool(AdderTool);
-
-    let mut builder = TestServer::builder();
-    builder.spawn_service(test_service).await;
-
-    builder.build(config).await;
-}
