@@ -286,6 +286,10 @@ pub fn oauth_config_basic() -> &'static str {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#}
 }
 
@@ -304,6 +308,10 @@ pub fn oauth_config_with_audience(audience: &str) -> String {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#
     )
 }
@@ -413,6 +421,10 @@ pub fn oauth_config_with_jwks_url(jwks_url: &str, poll_interval: &str) -> String
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
         "#
     )
 }
@@ -430,6 +442,10 @@ pub fn oauth_config_no_poll_interval(jwks_url: &str) -> String {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
         "#
     )
 }

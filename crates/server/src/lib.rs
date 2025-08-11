@@ -56,22 +56,44 @@ pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyho
     // Create a router for protected routes (that require OAuth)
     let mut protected_router = Router::new();
 
+    // Track which endpoints actually get initialized
+    let mut mcp_actually_exposed = false;
+    let mut llm_actually_exposed = false;
+
     // Apply CORS to MCP router before merging
-    if config.mcp.enabled {
+    // Expose MCP endpoint if enabled
+    if config.mcp.enabled() {
         let mut mcp_config_builder = mcp::RouterConfig::builder(config.clone());
 
         if let Some(ref manager) = rate_limit_manager {
             mcp_config_builder = mcp_config_builder.rate_limit_manager(manager.clone());
         }
 
-        let mcp_router = mcp::router(mcp_config_builder.build()).await?.layer(cors.clone());
-        protected_router = protected_router.merge(mcp_router);
+        match mcp::router(mcp_config_builder.build()).await {
+            Ok(mcp_router) => {
+                protected_router = protected_router.merge(mcp_router.layer(cors.clone()));
+                mcp_actually_exposed = true;
+            }
+            Err(e) => {
+                log::error!("Failed to initialize MCP router: {e}");
+            }
+        }
     }
 
     // Apply CORS to LLM router before merging
-    if config.llm.enabled {
-        let llm_router = llm::router(config.llm.clone()).await?;
-        protected_router = protected_router.merge(llm_router.layer(cors.clone()));
+    // Only expose LLM endpoint if enabled AND has configured providers
+    if config.llm.enabled() {
+        match llm::router(config.llm.clone()).await {
+            Ok(llm_router) => {
+                protected_router = protected_router.merge(llm_router.layer(cors.clone()));
+                llm_actually_exposed = true;
+            }
+            Err(e) => {
+                log::error!("Failed to initialize LLM router: {e}");
+            }
+        }
+    } else {
+        log::debug!("LLM is enabled but no providers are configured - LLM endpoint will not be exposed");
     }
 
     // Apply OAuth authentication to protected routes
@@ -125,18 +147,26 @@ pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyho
         .await
         .map_err(|e| anyhow!("Failed to bind to {listen_address}: {e}"))?;
 
+    // Check what endpoints are actually exposed
+    if !mcp_actually_exposed && !llm_actually_exposed {
+        log::warn!(
+            "Server starting with no functional endpoints. \
+            Configure MCP servers or LLM providers to enable functionality."
+        );
+    }
+
     match &config.server.tls {
         Some(tls_config) => {
             let rustls_config = RustlsConfig::from_pem_file(&tls_config.certificate, &tls_config.key)
                 .await
                 .map_err(|e| anyhow!("Failed to load TLS certificate and key: {e}"))?;
 
-            if config.mcp.enabled {
+            if mcp_actually_exposed {
                 log::info!("MCP endpoint available at: https://{listen_address}{}", config.mcp.path);
             }
 
-            if config.llm.enabled {
-                log::info!("AI endpoint available at: https://{listen_address}{}", config.llm.path);
+            if llm_actually_exposed {
+                log::info!("LLM endpoint available at: https://{listen_address}{}", config.llm.path);
             }
 
             axum_server::from_tcp_rustls(listener.into_std()?, rustls_config)
@@ -145,11 +175,11 @@ pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyho
                 .map_err(|e| anyhow!("Failed to start HTTPS server: {e}"))?;
         }
         None => {
-            if config.mcp.enabled {
+            if mcp_actually_exposed {
                 log::info!("MCP endpoint available at: http://{listen_address}{}", config.mcp.path);
             }
 
-            if config.llm.enabled {
+            if llm_actually_exposed {
                 log::info!("AI endpoint available at: http://{listen_address}{}", config.llm.path);
             }
 

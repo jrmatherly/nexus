@@ -384,6 +384,13 @@ async fn malformed_jwks_response() {
         [server.oauth.protected_resource]
         resource = "http://127.0.0.1:8080"
         authorization_servers = ["http://127.0.0.1:9999"]
+        
+        [mcp]
+        enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -422,6 +429,13 @@ async fn oauth_jwks_network_failure() {
         [server.oauth.protected_resource]
         resource = "http://127.0.0.1:8080"
         authorization_servers = ["http://127.0.0.1:65535"]
+        
+        [mcp]
+        enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;

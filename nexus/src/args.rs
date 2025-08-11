@@ -27,7 +27,10 @@ impl Args {
         let config = if self.config.exists() {
             Config::load(&self.config)?
         } else {
-            Config::default()
+            let config = Config::default();
+            // Validate default config to ensure it has downstream servers
+            config.validate()?;
+            config
         };
 
         Ok(config)

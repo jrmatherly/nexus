@@ -10,6 +10,10 @@ async fn disabled_by_default() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -40,6 +44,10 @@ async fn enabled_blocks_requests_without_header() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -62,6 +70,10 @@ async fn enabled_allows_requests_with_header() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -95,6 +107,10 @@ async fn enabled_allows_options_requests() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -123,6 +139,10 @@ async fn custom_header_name() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -159,6 +179,10 @@ async fn header_value_doesnt_matter() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -200,6 +224,10 @@ async fn works_with_cors() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -254,6 +282,10 @@ async fn applies_to_all_endpoints() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -305,6 +337,10 @@ async fn different_http_methods() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -372,6 +408,10 @@ async fn blocks_mcp_protocol() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -406,6 +446,10 @@ async fn disabled_allows_mcp_protocol() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;

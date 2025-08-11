@@ -56,7 +56,14 @@ impl LlmServer {
             }
         }
 
-        log::debug!("LLM server initialized with {} active providers", providers.len());
+        // Check if any providers were successfully initialized
+        if providers.is_empty() {
+            return Err(LlmError::InternalError(Some(
+                "Failed to initialize any LLM providers.".to_string(),
+            )));
+        } else {
+            log::debug!("LLM server initialized with {} active provider(s)", providers.len());
+        }
 
         // Create cache with TTL
         let models_cache = Cache::builder().time_to_live(MODELS_CACHE_DURATION).build();

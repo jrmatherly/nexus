@@ -18,6 +18,10 @@ async fn no_issuer_audience_validation_when_not_configured() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#;
 
     let server = TestServer::builder().build(config).await;
@@ -58,6 +62,10 @@ async fn with_hydra_token() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#;
 
     let server = TestServer::builder().build(config).await;
@@ -95,6 +103,10 @@ async fn wrong_issuer_validation() {
 
         [mcp]
         enabled = true
+        
+        # Dummy server to ensure MCP endpoint is exposed
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#;
 
     let server = TestServer::builder().build(config).await;
