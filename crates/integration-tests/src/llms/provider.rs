@@ -42,6 +42,9 @@ pub fn generate_config_for_type(provider_type: ProviderType, config: &LlmProvide
             type = "openai"
             api_key = "test-key"
             base_url = "http://{}/v1"
+            
+            # Phase 2: Empty models map means allow all models (backward compatibility)
+            # Tests still work without explicit model configs
         "#, config.name, config.address},
 
         ProviderType::Anthropic => formatdoc! {r#"
@@ -50,6 +53,9 @@ pub fn generate_config_for_type(provider_type: ProviderType, config: &LlmProvide
             type = "anthropic"
             api_key = "test-key"
             base_url = "http://{}/v1"
+            
+            # Phase 2: Empty models map means allow all models (backward compatibility)
+            # Tests still work without explicit model configs
         "#, config.name, config.address},
 
         ProviderType::Google => formatdoc! {r#"
@@ -58,6 +64,9 @@ pub fn generate_config_for_type(provider_type: ProviderType, config: &LlmProvide
             type = "google"
             api_key = "test-key"
             base_url = "http://{}/v1beta"
+            
+            # Phase 2: Empty models map means allow all models (backward compatibility)
+            # Tests still work without explicit model configs
         "#, config.name, config.address},
     }
 }

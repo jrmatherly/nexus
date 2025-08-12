@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use config::{LlmConfig, LlmProvider};
+use config::{LlmConfig, ProviderType};
 use futures::{
     lock::Mutex,
     stream::{FuturesUnordered, StreamExt},
@@ -34,26 +34,23 @@ struct LlmServerInner {
 
 impl LlmServer {
     pub async fn new(config: LlmConfig) -> crate::Result<Self> {
-        // Use compatibility layer for Phase 1
-        // TODO: Update to use new config directly in Phase 2
-        let providers_compat = config.into_providers_compat();
-        log::debug!("Initializing LLM server with {} providers", providers_compat.len());
-        let mut providers = Vec::with_capacity(providers_compat.len());
+        log::debug!("Initializing LLM server with {} providers", config.providers.len());
+        let mut providers = Vec::with_capacity(config.providers.len());
 
-        for (name, provider_config) in providers_compat.into_iter() {
+        for (name, provider_config) in config.providers.into_iter() {
             log::debug!("Initializing provider: {name}");
 
-            match provider_config {
-                LlmProvider::Openai(config) => {
-                    let provider = Box::new(OpenAIProvider::new(name.clone(), config)?);
+            match provider_config.provider_type {
+                ProviderType::Openai => {
+                    let provider = Box::new(OpenAIProvider::new(name.clone(), provider_config)?);
                     providers.push(provider as Box<dyn Provider>)
                 }
-                LlmProvider::Anthropic(config) => {
-                    let provider = Box::new(AnthropicProvider::new(name.clone(), config)?);
+                ProviderType::Anthropic => {
+                    let provider = Box::new(AnthropicProvider::new(name.clone(), provider_config)?);
                     providers.push(provider as Box<dyn Provider>)
                 }
-                LlmProvider::Google(config) => {
-                    let provider = Box::new(GoogleProvider::new(name.clone(), config)?);
+                ProviderType::Google => {
+                    let provider = Box::new(GoogleProvider::new(name.clone(), provider_config)?);
                     providers.push(provider as Box<dyn Provider>)
                 }
             }

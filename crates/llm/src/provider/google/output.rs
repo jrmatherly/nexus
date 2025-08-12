@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::messages::{
     ChatChoice, ChatChoiceDelta, ChatCompletionChunk, ChatCompletionResponse, ChatMessage, ChatMessageDelta, ChatRole,
-    Model, ObjectType, Usage,
+    ObjectType, Usage,
 };
 
 /// Reason why the model stopped generating tokens.
@@ -152,45 +152,6 @@ pub(super) struct GoogleUsageMetadata {
     pub(super) total_token_count: i32,
 }
 
-/// Response from listing available Gemini models.
-///
-/// Contains a list of models available for use with the Gemini API.
-/// Documented in the [Google AI API Reference](https://ai.google.dev/api/models/list).
-#[derive(Debug, Deserialize)]
-pub(super) struct GoogleModelsResponse {
-    /// List of available models.
-    pub(super) models: Vec<GoogleModel>,
-
-    /// Token for fetching the next page of results.
-    ///
-    /// If present, there are more models available that can be fetched
-    /// by including this token in the next request.
-    #[allow(dead_code)]
-    pub(super) next_page_token: Option<String>,
-}
-
-/// Describes a Gemini model available for use.
-///
-/// Contains metadata about a specific model including its capabilities.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct GoogleModel {
-    /// The resource name of the model.
-    ///
-    /// Format: `models/{model}` where `{model}` is the model ID.
-    /// Example: "models/gemini-1.5-pro"
-    pub(super) name: String,
-
-    /// List of generation methods supported by this model.
-    ///
-    /// Common values include:
-    /// - "generateContent": Standard text generation
-    /// - "streamGenerateContent": Streaming text generation
-    /// - "countTokens": Token counting
-    /// - "embedContent": Generate embeddings
-    pub(super) supported_generation_methods: Vec<String>,
-}
-
 impl From<GoogleGenerateResponse> for ChatCompletionResponse {
     fn from(response: GoogleGenerateResponse) -> Self {
         let candidate = response
@@ -258,20 +219,6 @@ impl From<GoogleGenerateResponse> for ChatCompletionResponse {
                     total_tokens: metadata.total_token_count as u32,
                 },
             ),
-        }
-    }
-}
-
-impl From<GoogleModel> for Model {
-    fn from(model: GoogleModel) -> Self {
-        // Extract model ID from the full name (e.g., "models/gemini-pro" -> "gemini-pro")
-        let id = model.name.split('/').next_back().unwrap_or(&model.name).to_string();
-
-        Self {
-            id,
-            object: ObjectType::Model,
-            created: 0, // Google doesn't provide creation timestamps
-            owned_by: "google".to_string(),
         }
     }
 }

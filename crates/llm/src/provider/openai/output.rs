@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::messages::{
     ChatChoice, ChatChoiceDelta, ChatCompletionChunk, ChatCompletionResponse, ChatMessage, ChatMessageDelta, ChatRole,
-    FinishReason, Model, ObjectType, Usage,
+    FinishReason, ObjectType, Usage,
 };
 
 /// Response from OpenAI Chat Completions API.
@@ -73,38 +73,6 @@ pub(super) struct OpenAIChoice {
     pub(super) finish_reason: Option<OpenAIFinishReason>,
 }
 
-/// Response from OpenAI Models API listing available models.
-///
-/// This struct represents the response format from the `/v1/models` endpoint
-/// as documented in the [OpenAI API Reference](https://platform.openai.com/docs/api-reference/models/list).
-#[derive(Debug, Deserialize)]
-pub(super) struct OpenAIModelsResponse {
-    /// List of available models.
-    pub(super) data: Vec<OpenAIModel>,
-}
-
-/// Describes an OpenAI model offering that can be used with the API.
-///
-/// Contains metadata about a specific model including its capabilities and ownership.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) struct OpenAIModel {
-    /// The model identifier, which can be referenced in the API endpoints.
-    /// Examples: "gpt-4", "gpt-3.5-turbo", "text-davinci-003"
-    pub(super) id: String,
-
-    /// The object type, which is always "model".
-    #[allow(dead_code)]
-    pub(super) object: String,
-
-    /// The Unix timestamp (in seconds) when the model was created.
-    pub(super) created: u64,
-
-    /// The organization that owns the model.
-    /// Examples: "openai", "openai-internal", "system"
-    pub(super) owned_by: String,
-}
-
 impl From<OpenAIFinishReason> for FinishReason {
     fn from(reason: OpenAIFinishReason) -> Self {
         match reason {
@@ -139,17 +107,6 @@ impl From<OpenAIResponse> for ChatCompletionResponse {
             model: String::new(), // Will be set by the provider
             choices: response.choices.into_iter().map(Into::into).collect(),
             usage: response.usage,
-        }
-    }
-}
-
-impl From<OpenAIModel> for Model {
-    fn from(model: OpenAIModel) -> Self {
-        Self {
-            id: model.id,
-            object: ObjectType::Model,
-            created: model.created,
-            owned_by: model.owned_by,
         }
     }
 }

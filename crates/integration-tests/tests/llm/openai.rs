@@ -16,26 +16,7 @@ async fn list_models() {
     }, @r#"
     {
       "object": "list",
-      "data": [
-        {
-          "id": "test_openai/gpt-3.5-turbo",
-          "object": "model",
-          "created": "[created]",
-          "owned_by": "openai"
-        },
-        {
-          "id": "test_openai/gpt-4",
-          "object": "model",
-          "created": "[created]",
-          "owned_by": "openai"
-        },
-        {
-          "id": "test_openai/gpt-4-turbo",
-          "object": "model",
-          "created": "[created]",
-          "owned_by": "openai"
-        }
-      ]
+      "data": []
     }
     "#);
 }
@@ -59,26 +40,7 @@ async fn custom_path() {
     }, @r#"
     {
       "object": "list",
-      "data": [
-        {
-          "id": "test_openai/gpt-3.5-turbo",
-          "object": "model",
-          "created": "[created]",
-          "owned_by": "openai"
-        },
-        {
-          "id": "test_openai/gpt-4",
-          "object": "model",
-          "created": "[created]",
-          "owned_by": "openai"
-        },
-        {
-          "id": "test_openai/gpt-4-turbo",
-          "object": "model",
-          "created": "[created]",
-          "owned_by": "openai"
-        }
-      ]
+      "data": []
     }
     "#);
 }

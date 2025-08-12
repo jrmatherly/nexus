@@ -14,26 +14,7 @@ async fn list_models() {
     insta::assert_json_snapshot!(body, @r#"
     {
       "object": "list",
-      "data": [
-        {
-          "id": "google/gemini-1.5-flash",
-          "object": "model",
-          "created": 0,
-          "owned_by": "google"
-        },
-        {
-          "id": "google/gemini-1.5-pro",
-          "object": "model",
-          "created": 0,
-          "owned_by": "google"
-        },
-        {
-          "id": "google/gemini-pro",
-          "object": "model",
-          "created": 0,
-          "owned_by": "google"
-        }
-      ]
+      "data": []
     }
     "#);
 }
@@ -407,20 +388,7 @@ async fn custom_models() {
     insta::assert_json_snapshot!(body, @r#"
     {
       "object": "list",
-      "data": [
-        {
-          "id": "google/gemini-experimental",
-          "object": "model",
-          "created": 0,
-          "owned_by": "google"
-        },
-        {
-          "id": "google/gemini-custom",
-          "object": "model",
-          "created": 0,
-          "owned_by": "google"
-        }
-      ]
+      "data": []
     }
     "#);
 }

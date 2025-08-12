@@ -2,13 +2,13 @@ mod input;
 mod output;
 
 use async_trait::async_trait;
-use config::GoogleConfig;
+use config::LlmProviderConfig;
 use reqwest::Client;
 use secrecy::ExposeSecret;
 
 use self::{
     input::GoogleGenerateRequest,
-    output::{GoogleGenerateResponse, GoogleModelsResponse, GoogleStreamChunk},
+    output::{GoogleGenerateResponse, GoogleStreamChunk},
 };
 
 use eventsource_stream::Eventsource;
@@ -17,7 +17,7 @@ use futures::StreamExt;
 use crate::{
     error::LlmError,
     messages::{ChatCompletionRequest, ChatCompletionResponse, Model},
-    provider::{Provider, openai::extract_model_from_full_name, token},
+    provider::{ModelManager, Provider, openai::extract_model_from_full_name, token},
     request::RequestContext,
 };
 
@@ -27,11 +27,12 @@ pub(crate) struct GoogleProvider {
     client: Client,
     base_url: String,
     name: String,
-    config: GoogleConfig,
+    config: LlmProviderConfig,
+    model_manager: ModelManager,
 }
 
 impl GoogleProvider {
-    pub fn new(name: String, config: GoogleConfig) -> crate::Result<Self> {
+    pub fn new(name: String, config: LlmProviderConfig) -> crate::Result<Self> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()
@@ -45,10 +46,13 @@ impl GoogleProvider {
             .clone()
             .unwrap_or_else(|| DEFAULT_GOOGLE_API_URL.to_string());
 
+        let model_manager = ModelManager::new(&config, "google");
+
         Ok(Self {
             client,
             base_url,
             name,
+            model_manager,
             config,
         })
     }
@@ -62,10 +66,17 @@ impl Provider for GoogleProvider {
         context: &RequestContext,
     ) -> crate::Result<ChatCompletionResponse> {
         let model_name = extract_model_from_full_name(&request.model);
+
+        // Check if the model is configured and get the actual model name to use
+        let actual_model = self
+            .model_manager
+            .resolve_model(&model_name)
+            .ok_or_else(|| LlmError::ModelNotFound(format!("Model '{}' is not configured", model_name)))?;
+
         let api_key = token::get(self.config.forward_token, &self.config.api_key, context)?;
 
         let url = format!(
-            "{}/models/{model_name}:generateContent?key={}",
+            "{}/models/{actual_model}:generateContent?key={}",
             self.base_url,
             api_key.expose_secret()
         );
@@ -129,64 +140,9 @@ impl Provider for GoogleProvider {
         Ok(response)
     }
 
-    async fn list_models(&self, context: &RequestContext) -> crate::Result<Vec<Model>> {
-        let api_key = token::get(self.config.forward_token, &self.config.api_key, context)?;
-        let url = format!("{}/models?key={}", self.base_url, api_key.expose_secret());
-
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| LlmError::ConnectionError(format!("Failed to fetch models from Google: {e}")))?;
-
-        let status = response.status();
-
-        if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            log::error!("Google API error ({status}): {error_text}");
-
-            return Err(match status.as_u16() {
-                400 => LlmError::InvalidRequest(error_text),
-                401 => LlmError::AuthenticationFailed(error_text),
-                _ => LlmError::ProviderApiError {
-                    status: status.as_u16(),
-                    message: error_text,
-                },
-            });
-        }
-
-        // First get the response as text to log if parsing fails
-        let response_text = response.text().await.map_err(|e| {
-            log::error!("Failed to read Google models response body: {e}");
-            LlmError::InternalError(None)
-        })?;
-
-        // Try to parse the response
-        let models_response: GoogleModelsResponse = sonic_rs::from_str(&response_text).map_err(|e| {
-            log::error!("Failed to parse Google models list response: {e}");
-            log::error!("Raw response that failed to parse: {response_text}");
-            LlmError::InternalError(None)
-        })?;
-
-        // Filter to only chat-capable models
-        let chat_models = models_response
-            .models
-            .into_iter()
-            .filter(|model| {
-                model
-                    .supported_generation_methods
-                    .contains(&"generateContent".to_string())
-            })
-            .filter(|model| {
-                // Filter to known chat models based on the name
-                // Google model names are in format "models/gemini-1.5-pro"
-                model.name.contains("gemini") || model.name.contains("chat") || model.name.contains("palm")
-            })
-            .map(Into::into)
-            .collect::<Vec<Model>>();
-
-        Ok(chat_models)
+    async fn list_models(&self, _context: &RequestContext) -> crate::Result<Vec<Model>> {
+        // Phase 2: Return only explicitly configured models
+        Ok(self.model_manager.get_configured_models())
     }
 
     async fn chat_completion_stream(
@@ -195,10 +151,17 @@ impl Provider for GoogleProvider {
         context: &RequestContext,
     ) -> crate::Result<crate::provider::ChatCompletionStream> {
         let model_name = extract_model_from_full_name(&request.model);
+
+        // Check if the model is configured and get the actual model name to use
+        let actual_model = self
+            .model_manager
+            .resolve_model(&model_name)
+            .ok_or_else(|| LlmError::ModelNotFound(format!("Model '{}' is not configured", model_name)))?;
+
         let api_key = token::get(self.config.forward_token, &self.config.api_key, context)?;
 
         let url = format!(
-            "{}/models/{model_name}:streamGenerateContent?alt=sse&key={}",
+            "{}/models/{actual_model}:streamGenerateContent?alt=sse&key={}",
             self.base_url,
             api_key.expose_secret()
         );

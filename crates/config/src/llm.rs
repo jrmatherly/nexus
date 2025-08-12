@@ -49,22 +49,6 @@ impl LlmConfig {
     pub fn has_providers(&self) -> bool {
         !self.providers.is_empty()
     }
-
-    /// Get providers in the old format for compatibility.
-    /// TODO: Remove after Phase 2
-    pub fn into_providers_compat(self) -> BTreeMap<String, LlmProvider> {
-        self.providers
-            .into_iter()
-            .map(|(name, config)| {
-                let provider = match config.provider_type {
-                    ProviderType::Openai => LlmProvider::Openai(config),
-                    ProviderType::Anthropic => LlmProvider::Anthropic(config),
-                    ProviderType::Google => LlmProvider::Google(config),
-                };
-                (name, provider)
-            })
-            .collect()
-    }
 }
 
 /// Provider type enumeration.
@@ -77,26 +61,6 @@ pub enum ProviderType {
     Anthropic,
     /// Google provider.
     Google,
-}
-
-// Temporary compatibility layer for Phase 1
-// TODO: Remove these after Phase 2 when LLM crate is updated
-/// Compatibility alias for OpenAI configuration.
-pub type OpenAiConfig = LlmProviderConfig;
-/// Compatibility alias for Anthropic configuration.
-pub type AnthropicConfig = LlmProviderConfig;
-/// Compatibility alias for Google configuration.
-pub type GoogleConfig = LlmProviderConfig;
-
-/// Compatibility enum for LLM providers.
-#[derive(Debug, Clone)]
-pub enum LlmProvider {
-    /// OpenAI provider.
-    Openai(LlmProviderConfig),
-    /// Anthropic provider.
-    Anthropic(LlmProviderConfig),
-    /// Google provider.
-    Google(LlmProviderConfig),
 }
 
 /// Unified LLM provider configuration.
