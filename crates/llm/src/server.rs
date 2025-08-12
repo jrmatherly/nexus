@@ -34,10 +34,13 @@ struct LlmServerInner {
 
 impl LlmServer {
     pub async fn new(config: LlmConfig) -> crate::Result<Self> {
-        log::debug!("Initializing LLM server with {} providers", config.providers.len());
-        let mut providers = Vec::with_capacity(config.providers.len());
+        // Use compatibility layer for Phase 1
+        // TODO: Update to use new config directly in Phase 2
+        let providers_compat = config.into_providers_compat();
+        log::debug!("Initializing LLM server with {} providers", providers_compat.len());
+        let mut providers = Vec::with_capacity(providers_compat.len());
 
-        for (name, provider_config) in config.providers.into_iter() {
+        for (name, provider_config) in providers_compat.into_iter() {
             log::debug!("Initializing provider: {name}");
 
             match provider_config {

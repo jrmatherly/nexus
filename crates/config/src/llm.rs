@@ -6,6 +6,15 @@ use std::collections::BTreeMap;
 use secrecy::SecretString;
 use serde::Deserialize;
 
+/// Configuration for an individual model within a provider.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModelConfig {
+    /// Optional rename - the actual provider model name.
+    /// If not specified, the model ID (map key) is used.
+    #[serde(default)]
+    pub rename: Option<String>,
+}
+
 /// LLM configuration for AI model integration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -17,7 +26,7 @@ pub struct LlmConfig {
     pub path: Cow<'static, str>,
 
     /// Map of LLM provider configurations.
-    pub providers: BTreeMap<String, LlmProvider>,
+    pub providers: BTreeMap<String, LlmProviderConfig>,
 }
 
 impl Default for LlmConfig {
@@ -40,69 +49,85 @@ impl LlmConfig {
     pub fn has_providers(&self) -> bool {
         !self.providers.is_empty()
     }
+
+    /// Get providers in the old format for compatibility.
+    /// TODO: Remove after Phase 2
+    pub fn into_providers_compat(self) -> BTreeMap<String, LlmProvider> {
+        self.providers
+            .into_iter()
+            .map(|(name, config)| {
+                let provider = match config.provider_type {
+                    ProviderType::Openai => LlmProvider::Openai(config),
+                    ProviderType::Anthropic => LlmProvider::Anthropic(config),
+                    ProviderType::Google => LlmProvider::Google(config),
+                };
+                (name, provider)
+            })
+            .collect()
+    }
 }
 
-/// LLM provider configuration.
+/// Provider type enumeration.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderType {
+    /// OpenAI provider.
+    Openai,
+    /// Anthropic provider.
+    Anthropic,
+    /// Google provider.
+    Google,
+}
+
+// Temporary compatibility layer for Phase 1
+// TODO: Remove these after Phase 2 when LLM crate is updated
+/// Compatibility alias for OpenAI configuration.
+pub type OpenAiConfig = LlmProviderConfig;
+/// Compatibility alias for Anthropic configuration.
+pub type AnthropicConfig = LlmProviderConfig;
+/// Compatibility alias for Google configuration.
+pub type GoogleConfig = LlmProviderConfig;
+
+/// Compatibility enum for LLM providers.
+#[derive(Debug, Clone)]
 pub enum LlmProvider {
-    /// OpenAI provider configuration.
-    Openai(OpenAiConfig),
-    /// Anthropic provider configuration.
-    Anthropic(AnthropicConfig),
-    /// Google provider configuration.
-    Google(GoogleConfig),
+    /// OpenAI provider.
+    Openai(LlmProviderConfig),
+    /// Anthropic provider.
+    Anthropic(LlmProviderConfig),
+    /// Google provider.
+    Google(LlmProviderConfig),
 }
 
-/// OpenAI provider configuration.
+/// Unified LLM provider configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct OpenAiConfig {
-    /// API key for OpenAI (supports environment variable interpolation).
+pub struct LlmProviderConfig {
+    /// The type of provider.
+    #[serde(rename = "type")]
+    pub provider_type: ProviderType,
+
+    /// API key for the provider (supports environment variable interpolation).
     /// This key is used as a fallback when token forwarding is enabled and no user key is provided.
     /// When token forwarding is disabled, this is the primary API key.
     #[serde(default)]
     pub api_key: Option<SecretString>,
-    /// Custom base URL (defaults to https://api.openai.com/v1).
-    #[serde(default)]
-    pub base_url: Option<String>,
-    /// Enable token forwarding - allows users to provide their own API keys via headers.
-    #[serde(default)]
-    pub forward_token: bool,
-}
 
-/// Anthropic provider configuration.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AnthropicConfig {
-    /// API key for Anthropic (supports environment variable interpolation).
-    /// This key is used as a fallback when token forwarding is enabled and no user key is provided.
-    /// When token forwarding is disabled, this is the primary API key.
-    #[serde(default)]
-    pub api_key: Option<SecretString>,
-    /// Custom base URL (defaults to https://api.anthropic.com/v1).
+    /// Custom base URL for the provider.
+    /// Each provider has its own default if not specified:
+    /// - OpenAI: https://api.openai.com/v1
+    /// - Anthropic: https://api.anthropic.com/v1
+    /// - Google: https://generativelanguage.googleapis.com/v1beta
     #[serde(default)]
     pub base_url: Option<String>,
-    /// Enable token forwarding - allows users to provide their own API keys via headers.
-    #[serde(default)]
-    pub forward_token: bool,
-}
 
-/// Google provider configuration.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GoogleConfig {
-    /// API key for Google (supports environment variable interpolation).
-    /// This key is used as a fallback when token forwarding is enabled and no user key is provided.
-    /// When token forwarding is disabled, this is the primary API key.
-    #[serde(default)]
-    pub api_key: Option<SecretString>,
-    /// Custom base URL (defaults to https://generativelanguage.googleapis.com/v1beta).
-    #[serde(default)]
-    pub base_url: Option<String>,
     /// Enable token forwarding - allows users to provide their own API keys via headers.
     #[serde(default)]
     pub forward_token: bool,
+
+    /// Explicitly configured models for this provider.
+    #[serde(default)]
+    pub models: BTreeMap<String, ModelConfig>,
 }
 
 #[cfg(test)]
@@ -142,15 +167,15 @@ mod tests {
             enabled: true,
             path: "/llm",
             providers: {
-                "openai": Openai(
-                    OpenAiConfig {
-                        api_key: Some(
-                            SecretBox<str>([REDACTED]),
-                        ),
-                        base_url: None,
-                        forward_token: false,
-                    },
-                ),
+                "openai": LlmProviderConfig {
+                    provider_type: Openai,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {},
+                },
             },
         }
         "#);
@@ -174,15 +199,15 @@ mod tests {
             enabled: true,
             path: "/llm",
             providers: {
-                "anthropic": Anthropic(
-                    AnthropicConfig {
-                        api_key: Some(
-                            SecretBox<str>([REDACTED]),
-                        ),
-                        base_url: None,
-                        forward_token: false,
-                    },
-                ),
+                "anthropic": LlmProviderConfig {
+                    provider_type: Anthropic,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {},
+                },
             },
         }
         "#);
@@ -203,15 +228,15 @@ mod tests {
             enabled: true,
             path: "/llm",
             providers: {
-                "google": Google(
-                    GoogleConfig {
-                        api_key: Some(
-                            SecretBox<str>([REDACTED]),
-                        ),
-                        base_url: None,
-                        forward_token: false,
-                    },
-                ),
+                "google": LlmProviderConfig {
+                    provider_type: Google,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {},
+                },
             },
         }
         "#);
@@ -243,33 +268,33 @@ mod tests {
             enabled: true,
             path: "/ai",
             providers: {
-                "anthropic": Anthropic(
-                    AnthropicConfig {
-                        api_key: Some(
-                            SecretBox<str>([REDACTED]),
-                        ),
-                        base_url: None,
-                        forward_token: false,
-                    },
-                ),
-                "google": Google(
-                    GoogleConfig {
-                        api_key: Some(
-                            SecretBox<str>([REDACTED]),
-                        ),
-                        base_url: None,
-                        forward_token: false,
-                    },
-                ),
-                "openai": Openai(
-                    OpenAiConfig {
-                        api_key: Some(
-                            SecretBox<str>([REDACTED]),
-                        ),
-                        base_url: None,
-                        forward_token: false,
-                    },
-                ),
+                "anthropic": LlmProviderConfig {
+                    provider_type: Anthropic,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {},
+                },
+                "google": LlmProviderConfig {
+                    provider_type: Google,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {},
+                },
+                "openai": LlmProviderConfig {
+                    provider_type: Openai,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {},
+                },
             },
         }
         "#);
@@ -339,15 +364,169 @@ mod tests {
             enabled: true,
             path: "/llm",
             providers: {
-                "openai": Openai(
-                    OpenAiConfig {
-                        api_key: Some(
-                            SecretBox<str>([REDACTED]),
-                        ),
-                        base_url: None,
-                        forward_token: false,
+                "openai": LlmProviderConfig {
+                    provider_type: Openai,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {},
+                },
+            },
+        }
+        "#);
+    }
+
+    #[test]
+    fn llm_config_with_explicit_models() {
+        let config = indoc! {r#"
+            [providers.openai]
+            type = "openai"
+            api_key = "key"
+            
+            [providers.openai.models.gpt-4]
+            rename = "gpt-4-turbo-preview"
+            
+            [providers.openai.models.gpt-3-5]
+            rename = "gpt-3.5-turbo"
+        "#};
+
+        let config: LlmConfig = toml::from_str(config).unwrap();
+
+        assert_debug_snapshot!(&config, @r#"
+        LlmConfig {
+            enabled: true,
+            path: "/llm",
+            providers: {
+                "openai": LlmProviderConfig {
+                    provider_type: Openai,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {
+                        "gpt-3-5": ModelConfig {
+                            rename: Some(
+                                "gpt-3.5-turbo",
+                            ),
+                        },
+                        "gpt-4": ModelConfig {
+                            rename: Some(
+                                "gpt-4-turbo-preview",
+                            ),
+                        },
                     },
-                ),
+                },
+            },
+        }
+        "#);
+    }
+
+    #[test]
+    fn llm_config_models_without_rename() {
+        let config = indoc! {r#"
+            [providers.openai]
+            type = "openai"
+            api_key = "key"
+            
+            [providers.openai.models.gpt-4]
+            # No rename - will use "gpt-4" as-is
+            
+            [providers.openai.models.custom-model]
+            # No fields at all
+        "#};
+
+        let config: LlmConfig = toml::from_str(config).unwrap();
+
+        assert_debug_snapshot!(&config, @r#"
+        LlmConfig {
+            enabled: true,
+            path: "/llm",
+            providers: {
+                "openai": LlmProviderConfig {
+                    provider_type: Openai,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {
+                        "custom-model": ModelConfig {
+                            rename: None,
+                        },
+                        "gpt-4": ModelConfig {
+                            rename: None,
+                        },
+                    },
+                },
+            },
+        }
+        "#);
+    }
+
+    #[test]
+    fn llm_config_mixed_providers_with_models() {
+        let config = indoc! {r#"
+            [providers.openai]
+            type = "openai"
+            api_key = "key1"
+            
+            [providers.openai.models.gpt-4]
+            rename = "gpt-4-turbo"
+            
+            [providers.anthropic]
+            type = "anthropic"
+            api_key = "key2"
+            
+            [providers.anthropic.models.claude-3]
+            rename = "claude-3-opus-20240229"
+            
+            [providers.anthropic.models.claude-instant]
+            # No rename
+        "#};
+
+        let config: LlmConfig = toml::from_str(config).unwrap();
+
+        assert_debug_snapshot!(&config, @r#"
+        LlmConfig {
+            enabled: true,
+            path: "/llm",
+            providers: {
+                "anthropic": LlmProviderConfig {
+                    provider_type: Anthropic,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {
+                        "claude-3": ModelConfig {
+                            rename: Some(
+                                "claude-3-opus-20240229",
+                            ),
+                        },
+                        "claude-instant": ModelConfig {
+                            rename: None,
+                        },
+                    },
+                },
+                "openai": LlmProviderConfig {
+                    provider_type: Openai,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {
+                        "gpt-4": ModelConfig {
+                            rename: Some(
+                                "gpt-4-turbo",
+                            ),
+                        },
+                    },
+                },
             },
         }
         "#);
@@ -379,31 +558,31 @@ mod tests {
             enabled: true,
             path: "/llm",
             providers: {
-                "anthropic": Anthropic(
-                    AnthropicConfig {
-                        api_key: None,
-                        base_url: None,
-                        forward_token: true,
-                    },
-                ),
-                "google": Google(
-                    GoogleConfig {
-                        api_key: Some(
-                            SecretBox<str>([REDACTED]),
-                        ),
-                        base_url: None,
-                        forward_token: false,
-                    },
-                ),
-                "openai": Openai(
-                    OpenAiConfig {
-                        api_key: Some(
-                            SecretBox<str>([REDACTED]),
-                        ),
-                        base_url: None,
-                        forward_token: true,
-                    },
-                ),
+                "anthropic": LlmProviderConfig {
+                    provider_type: Anthropic,
+                    api_key: None,
+                    base_url: None,
+                    forward_token: true,
+                    models: {},
+                },
+                "google": LlmProviderConfig {
+                    provider_type: Google,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {},
+                },
+                "openai": LlmProviderConfig {
+                    provider_type: Openai,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: true,
+                    models: {},
+                },
             },
         }
         "#);

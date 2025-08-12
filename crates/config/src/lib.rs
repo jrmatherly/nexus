@@ -17,7 +17,9 @@ use std::{
 
 pub use cors::*;
 use duration_str::deserialize_option_duration;
-pub use llm::{AnthropicConfig, GoogleConfig, LlmConfig, LlmProvider, OpenAiConfig};
+pub use llm::{
+    AnthropicConfig, GoogleConfig, LlmConfig, LlmProvider, LlmProviderConfig, ModelConfig, OpenAiConfig, ProviderType,
+};
 pub use mcp::{
     ClientAuthConfig, HttpConfig, HttpProtocol, McpConfig, McpServer, McpServerRateLimit, StdioConfig, StdioTarget,
     StdioTargetType, TlsClientConfig,
@@ -1787,24 +1789,24 @@ mod tests {
             enabled: true,
             path: "/ai",
             providers: {
-                "anthropic": Anthropic(
-                    AnthropicConfig {
-                        api_key: Some(
-                            SecretBox<str>([REDACTED]),
-                        ),
-                        base_url: None,
-                        forward_token: false,
-                    },
-                ),
-                "openai": Openai(
-                    OpenAiConfig {
-                        api_key: Some(
-                            SecretBox<str>([REDACTED]),
-                        ),
-                        base_url: None,
-                        forward_token: false,
-                    },
-                ),
+                "anthropic": LlmProviderConfig {
+                    provider_type: Anthropic,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {},
+                },
+                "openai": LlmProviderConfig {
+                    provider_type: Openai,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {},
+                },
             },
         }
         "#);
