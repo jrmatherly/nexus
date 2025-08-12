@@ -28,12 +28,6 @@ async fn list_models() {
           "object": "model",
           "created": "[created]",
           "owned_by": "openai"
-        },
-        {
-          "id": "test_openai/gpt-4-turbo",
-          "object": "model",
-          "created": "[created]",
-          "owned_by": "openai"
         }
       ]
     }
@@ -68,12 +62,6 @@ async fn custom_path() {
         },
         {
           "id": "test_openai/gpt-4",
-          "object": "model",
-          "created": "[created]",
-          "owned_by": "openai"
-        },
-        {
-          "id": "test_openai/gpt-4-turbo",
           "object": "model",
           "created": "[created]",
           "owned_by": "openai"

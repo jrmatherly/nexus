@@ -8,6 +8,7 @@ mod anthropic;
 mod error_handling;
 mod forward_token;
 mod google;
+mod model_configuration;
 mod openai;
 
 #[tokio::test]
@@ -37,17 +38,17 @@ async fn multiple_providers_work_together() {
 
     insta::assert_debug_snapshot!(model_ids, @r#"
     [
-        "anthropic/claude-3-5-sonnet-20241022",
         "anthropic/claude-3-5-haiku-20241022",
+        "anthropic/claude-3-5-sonnet-20241022",
+        "anthropic/claude-3-haiku-20240307",
         "anthropic/claude-3-opus-20240229",
         "anthropic/claude-3-sonnet-20240229",
-        "anthropic/claude-3-haiku-20240307",
         "google/gemini-1.5-flash",
         "google/gemini-1.5-pro",
         "google/gemini-pro",
+        "google/text-embedding-004",
         "openai/gpt-3.5-turbo",
         "openai/gpt-4",
-        "openai/gpt-4-turbo",
     ]
     "#);
 

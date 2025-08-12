@@ -3,7 +3,7 @@ mod output;
 
 use async_trait::async_trait;
 use axum::http::HeaderMap;
-use config::OpenAiConfig;
+use config::LlmProviderConfig;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use reqwest::{Client, header::AUTHORIZATION};
@@ -11,13 +11,13 @@ use secrecy::ExposeSecret;
 
 use self::{
     input::OpenAIRequest,
-    output::{OpenAIModelsResponse, OpenAIResponse, OpenAIStreamChunk},
+    output::{OpenAIResponse, OpenAIStreamChunk},
 };
 
 use crate::{
     error::LlmError,
     messages::{ChatCompletionRequest, ChatCompletionResponse, Model},
-    provider::{ChatCompletionStream, Provider, token},
+    provider::{ChatCompletionStream, ModelManager, Provider, token},
     request::RequestContext,
 };
 
@@ -27,11 +27,12 @@ pub(crate) struct OpenAIProvider {
     client: Client,
     base_url: String,
     name: String,
-    config: OpenAiConfig,
+    config: LlmProviderConfig,
+    model_manager: ModelManager,
 }
 
 impl OpenAIProvider {
-    pub fn new(name: String, config: OpenAiConfig) -> crate::Result<Self> {
+    pub fn new(name: String, config: LlmProviderConfig) -> crate::Result<Self> {
         let headers = HeaderMap::new();
 
         let client = Client::builder()
@@ -49,10 +50,13 @@ impl OpenAIProvider {
             .clone()
             .unwrap_or_else(|| DEFAULT_OPENAI_API_URL.to_string());
 
+        let model_manager = ModelManager::new(&config, "openai");
+
         Ok(Self {
             client,
             base_url,
             name,
+            model_manager,
             config,
         })
     }
@@ -70,8 +74,14 @@ impl Provider for OpenAIProvider {
         let model_name = extract_model_from_full_name(&request.model);
         let original_model = request.model.clone();
 
+        // Check if the model is configured and get the actual model name to use
+        let actual_model = self
+            .model_manager
+            .resolve_model(&model_name)
+            .ok_or_else(|| LlmError::ModelNotFound(format!("Model '{}' is not configured", model_name)))?;
+
         let mut openai_request = OpenAIRequest::from(request);
-        openai_request.model = model_name;
+        openai_request.model = actual_model;
         openai_request.stream = false; // Always false for now
 
         let mut request_builder = self.client.post(&url);
@@ -122,100 +132,9 @@ impl Provider for OpenAIProvider {
         Ok(response)
     }
 
-    async fn list_models(&self, context: &RequestContext) -> crate::Result<Vec<Model>> {
-        let url = format!("{}/models", self.base_url);
-        let key = token::get(self.config.forward_token, &self.config.api_key, context)?;
-
-        let response = self
-            .client
-            .get(&url)
-            .header(AUTHORIZATION, format!("Bearer {}", key.expose_secret()))
-            .send()
-            .await
-            .map_err(|e| LlmError::ConnectionError(format!("Failed to fetch models from OpenAI: {e}")))?;
-
-        let status = response.status();
-
-        if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            log::error!("OpenAI API error ({status}): {error_text}");
-
-            return Err(match status.as_u16() {
-                400 => LlmError::InvalidRequest(error_text),
-                401 => LlmError::AuthenticationFailed(error_text),
-                _ => LlmError::ProviderApiError {
-                    status: status.as_u16(),
-                    message: error_text,
-                },
-            });
-        }
-
-        // First get the response as text to log if parsing fails
-        let response_text = response.text().await.map_err(|e| {
-            log::error!("Failed to read OpenAI models response body: {e}");
-            LlmError::InternalError(None)
-        })?;
-
-        // Try to parse the response
-        let models_response: OpenAIModelsResponse = sonic_rs::from_str(&response_text).map_err(|e| {
-            log::error!("Failed to parse OpenAI models list response: {e}");
-            log::error!("Raw response that failed to parse: {response_text}");
-            LlmError::InternalError(None)
-        })?;
-
-        // Filter to only chat-compatible models that work with the chat/completions endpoint
-        // Exclude models that:
-        // - Don't support chat format (completion models, embeddings, etc.)
-        // - Are for different modalities (audio, image)
-        // - Have specialized purposes incompatible with chat (search, moderation)
-        let total_models = models_response.data.len();
-        let chat_models = models_response
-            .data
-            .into_iter()
-            .filter(|model| {
-                let id = &model.id;
-
-                // Exclude non-chat model types
-                if id.contains("embedding")
-                    || id.contains("whisper")
-                    || id.contains("tts")
-                    || id.contains("dall-e")
-                    || id.contains("davinci")
-                    || id.contains("curie")
-                    || id.contains("babbage")
-                    || id.contains("ada")
-                    || id.contains("search")
-                    || id.contains("text-similarity")
-                    || id.contains("code-search")
-                    || id.contains("audio")
-                    || id.contains("moderation")
-                    || id.contains("realtime")
-                {
-                    log::debug!("Filtering out non-chat model: {id}");
-                    return false;
-                }
-
-                // Include known chat models
-                let is_chat =
-                    id.starts_with("gpt") || id.starts_with("o1") || id.starts_with("chatgpt") || id.contains("turbo");
-
-                if !is_chat {
-                    log::debug!("Filtering out unknown model type: {id}");
-                }
-
-                is_chat
-            })
-            .map(Into::into)
-            .collect::<Vec<Model>>();
-
-        log::debug!(
-            "OpenAI models: filtered {}/{} models to {} chat-compatible models",
-            total_models - chat_models.len(),
-            total_models,
-            chat_models.len()
-        );
-
-        Ok(chat_models)
+    fn list_models(&self) -> Vec<Model> {
+        // Phase 3: Return only explicitly configured models, error if none
+        self.model_manager.get_configured_models()
     }
 
     async fn chat_completion_stream(
@@ -225,7 +144,15 @@ impl Provider for OpenAIProvider {
     ) -> crate::Result<ChatCompletionStream> {
         let url = format!("{}/chat/completions", self.base_url);
 
+        // Check if the model is configured and get the actual model name to use
+        let model_name = extract_model_from_full_name(&request.model);
+        let actual_model = self
+            .model_manager
+            .resolve_model(&model_name)
+            .ok_or_else(|| LlmError::ModelNotFound(format!("Model '{}' is not configured", model_name)))?;
+
         let mut openai_request = OpenAIRequest::from(request);
+        openai_request.model = actual_model;
         openai_request.stream = true;
 
         let key = token::get(self.config.forward_token, &self.config.api_key, context)?;

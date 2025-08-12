@@ -154,6 +154,9 @@ Nexus requires at least one downstream service (MCP servers or LLM providers) to
 
 - **MCP**: When `mcp.enabled = true`, at least one server must be configured in `mcp.servers`
 - **LLM**: When `llm.enabled = true`, at least one provider must be configured in `llm.providers`
+  - Each LLM provider MUST have at least one model explicitly configured
+  - Models are configured under `[llm.providers.<name>.models.<model-id>]`
+  - Model IDs containing dots must be quoted: `[llm.providers.google.models."gemini-1.5-flash"]`
 
 For integration tests that need to test endpoints without actual downstream servers, use dummy configurations:
 
@@ -164,6 +167,17 @@ enabled = true
 # Dummy server to ensure MCP endpoint is exposed
 [mcp.servers.dummy]
 cmd = ["echo", "dummy"]
+```
+
+For LLM providers in tests:
+
+```toml
+[llm.providers.test]
+type = "openai"
+api_key = "test-key"
+
+# At least one model is required
+[llm.providers.test.models.gpt-4]
 ```
 
 The MCP service will log warnings if configured servers fail to initialize but will continue to expose the endpoint. The LLM service will return an error if no providers can be initialized.
@@ -363,6 +377,57 @@ async fn handle_tool_search(query: String) -> anyhow::Result<Vec<Tool>> {
 async fn handle_tool_search(query: String) -> Result<Vec<Tool>, anyhow::Error> {
     ...
 }
+```
+
+## LLM Provider Configuration Patterns
+
+### Model Configuration Requirements
+
+Every LLM provider MUST have explicit model configuration:
+
+```rust
+// In config parsing - models are required
+#[derive(Deserialize)]
+pub struct ProviderConfig {
+    #[serde(rename = "type")]
+    pub provider_type: ProviderType,
+    pub api_key: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_non_empty_models_with_default")]
+    pub models: BTreeMap<String, ModelConfig>,  // Must have at least one entry
+}
+```
+
+### Model Resolution Pattern
+
+Use the `ModelManager` for consistent model resolution across providers:
+
+```rust
+// Good: Use ModelManager for model resolution
+let model_manager = ModelManager::new(config.models, "provider_name");
+let actual_model = model_manager.resolve_model(requested_model)
+    .ok_or_else(|| LlmError::ModelNotFound(format!("Model '{}' is not configured", requested_model)))?;
+
+// Bad: Manual model resolution logic in each provider
+if let Some(model_config) = config.models.get(requested_model) {
+    // ... duplicated logic
+}
+```
+
+### Testing with Model Configurations
+
+Integration tests should always include model configurations:
+
+```rust
+// Good: Explicit model configuration in tests
+let mock = OpenAIMock::new("test")
+    .with_models(vec!["gpt-4".to_string()])
+    .with_model_configs(vec![
+        ModelConfig::new("fast").with_rename("gpt-3.5-turbo"),
+        ModelConfig::new("smart").with_rename("gpt-4"),
+    ]);
+
+// Bad: Tests without model configuration (will fail)
+let mock = OpenAIMock::new("test");  // Missing models configuration
 ```
 
 ## Dependency Management

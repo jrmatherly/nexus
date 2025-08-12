@@ -114,7 +114,7 @@ async fn model_not_found_returns_404() {
     insta::assert_json_snapshot!(body, @r#"
     {
       "error": {
-        "message": "Model 'The model 'gpt-5' does not exist' not found",
+        "message": "Model 'Model 'gpt-5' is not configured' not found",
         "type": "not_found_error",
         "code": 404
       }
@@ -240,7 +240,20 @@ async fn list_models_with_auth_error_returns_empty_list() {
     insta::assert_json_snapshot!(body, @r#"
     {
       "object": "list",
-      "data": []
+      "data": [
+        {
+          "id": "openai/gpt-3.5-turbo",
+          "object": "model",
+          "created": 1719475200,
+          "owned_by": "openai"
+        },
+        {
+          "id": "openai/gpt-4",
+          "object": "model",
+          "created": 1719475200,
+          "owned_by": "openai"
+        }
+      ]
     }
     "#);
 }

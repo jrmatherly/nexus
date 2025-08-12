@@ -17,7 +17,7 @@ use std::{
 
 pub use cors::*;
 use duration_str::deserialize_option_duration;
-pub use llm::{AnthropicConfig, GoogleConfig, LlmConfig, LlmProvider, OpenAiConfig};
+pub use llm::{LlmConfig, LlmProviderConfig, ModelConfig, ProviderType};
 pub use mcp::{
     ClientAuthConfig, HttpConfig, HttpProtocol, McpConfig, McpServer, McpServerRateLimit, StdioConfig, StdioTarget,
     StdioTargetType, TlsClientConfig,
@@ -1774,10 +1774,14 @@ mod tests {
             [llm.providers.openai]
             type = "openai"
             api_key = "${OPENAI_API_KEY}"
+            
+            [llm.providers.openai.models.gpt-4]
 
             [llm.providers.anthropic]
             type = "anthropic"
             api_key = "{{ env.ANTHROPIC_API_KEY }}"
+            
+            [llm.providers.anthropic.models.claude-3-opus]
         "#};
 
         let config: Config = toml::from_str(config).unwrap();
@@ -1787,24 +1791,32 @@ mod tests {
             enabled: true,
             path: "/ai",
             providers: {
-                "anthropic": Anthropic(
-                    AnthropicConfig {
-                        api_key: Some(
-                            SecretBox<str>([REDACTED]),
-                        ),
-                        base_url: None,
-                        forward_token: false,
+                "anthropic": LlmProviderConfig {
+                    provider_type: Anthropic,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {
+                        "claude-3-opus": ModelConfig {
+                            rename: None,
+                        },
                     },
-                ),
-                "openai": Openai(
-                    OpenAiConfig {
-                        api_key: Some(
-                            SecretBox<str>([REDACTED]),
-                        ),
-                        base_url: None,
-                        forward_token: false,
+                },
+                "openai": LlmProviderConfig {
+                    provider_type: Openai,
+                    api_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
+                    base_url: None,
+                    forward_token: false,
+                    models: {
+                        "gpt-4": ModelConfig {
+                            rename: None,
+                        },
                     },
-                ),
+                },
             },
         }
         "#);
@@ -2084,6 +2096,8 @@ mod tests {
             [llm.providers.openai]
             type = "openai"
             api_key = "test-key"
+            
+            [llm.providers.openai.models.gpt-4]
         "#};
 
         let config: Config = toml::from_str(config_str).unwrap();
@@ -2100,6 +2114,8 @@ mod tests {
             [llm.providers.openai]
             type = "openai"
             api_key = "test-key"
+            
+            [llm.providers.openai.models.gpt-4]
         "#};
 
         let config: Config = toml::from_str(config_str).unwrap();
@@ -2116,6 +2132,8 @@ mod tests {
             [llm.providers.openai]
             type = "openai"
             api_key = "test-key"
+            
+            [llm.providers.openai.models.gpt-4]
         "#};
 
         let config: Config = toml::from_str(config_str).unwrap();

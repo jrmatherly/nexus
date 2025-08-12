@@ -30,7 +30,7 @@ pub(super) struct OpenAIRequest {
     ///
     /// The total length of input tokens and generated tokens is limited by the model's context length.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) max_tokens: Option<u32>,
+    pub(super) max_completion_tokens: Option<u32>,
 
     /// An alternative to sampling with temperature, called nucleus sampling.
     /// The model considers the results of the tokens with top_p probability mass.
@@ -68,7 +68,7 @@ impl From<ChatCompletionRequest> for OpenAIRequest {
             model: request.model,
             messages: request.messages,
             temperature: request.temperature,
-            max_tokens: request.max_tokens,
+            max_completion_tokens: request.max_tokens,
             top_p: request.top_p,
             frequency_penalty: request.frequency_penalty,
             presence_penalty: request.presence_penalty,

@@ -1,7 +1,10 @@
 pub(crate) mod anthropic;
 pub(crate) mod google;
+mod model_manager;
 pub(crate) mod openai;
 mod token;
+
+pub(crate) use model_manager::ModelManager;
 
 use async_trait::async_trait;
 use futures::Stream;
@@ -61,7 +64,7 @@ pub(crate) trait Provider: Send + Sync {
     }
 
     /// List available models for this provider.
-    async fn list_models(&self, context: &RequestContext) -> crate::Result<Vec<Model>>;
+    fn list_models(&self) -> Vec<Model>;
 
     /// Get the provider name.
     fn name(&self) -> &str;

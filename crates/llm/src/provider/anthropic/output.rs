@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::messages::{
     ChatChoice, ChatChoiceDelta, ChatCompletionChunk, ChatCompletionResponse, ChatMessage, ChatMessageDelta, ChatRole,
-    FinishReason, Model, ObjectType, Usage,
+    FinishReason, ObjectType, Usage,
 };
 
 /// Describes the type of content in an Anthropic message.
@@ -142,33 +142,6 @@ pub(super) struct AnthropicUsage {
     pub output_tokens: i32,
 }
 
-/// Response from listing available Anthropic models.
-///
-/// Note: Anthropic doesn't have an official models listing endpoint,
-/// so this structure is used for compatibility with our unified interface.
-#[derive(Debug, Deserialize)]
-pub(super) struct AnthropicModelsResponse {
-    /// List of available Anthropic models.
-    pub data: Vec<AnthropicModel>,
-}
-
-/// Describes an Anthropic model.
-///
-/// Contains metadata about a specific Claude model.
-/// Note: Since Anthropic doesn't have an official models endpoint,
-/// some fields may be populated with default values.
-#[derive(Debug, Deserialize)]
-pub(super) struct AnthropicModel {
-    /// The model identifier.
-    /// Examples: "claude-3-opus-20240229", "claude-3-sonnet-20240229"
-    pub id: String,
-
-    /// Unix timestamp of when the model was created.
-    /// May be None as Anthropic doesn't provide this information.
-    #[serde(default)]
-    pub created: Option<u64>,
-}
-
 impl From<AnthropicResponse> for ChatCompletionResponse {
     fn from(response: AnthropicResponse) -> Self {
         let message_content = response
@@ -216,17 +189,6 @@ impl From<AnthropicResponse> for ChatCompletionResponse {
                 completion_tokens: response.usage.output_tokens as u32,
                 total_tokens: (response.usage.input_tokens + response.usage.output_tokens) as u32,
             },
-        }
-    }
-}
-
-impl From<AnthropicModel> for Model {
-    fn from(model: AnthropicModel) -> Self {
-        Self {
-            id: model.id,
-            object: ObjectType::Model,
-            created: model.created.unwrap_or(0),
-            owned_by: "anthropic".to_string(),
         }
     }
 }

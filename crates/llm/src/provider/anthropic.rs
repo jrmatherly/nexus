@@ -3,7 +3,7 @@ mod output;
 
 use async_trait::async_trait;
 use axum::http::HeaderMap;
-use config::AnthropicConfig;
+use config::LlmProviderConfig;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use reqwest::Client;
@@ -11,13 +11,13 @@ use secrecy::ExposeSecret;
 
 use self::{
     input::AnthropicRequest,
-    output::{AnthropicModelsResponse, AnthropicResponse, AnthropicStreamEvent, AnthropicStreamProcessor},
+    output::{AnthropicResponse, AnthropicStreamEvent, AnthropicStreamProcessor},
 };
 
 use crate::{
     error::LlmError,
     messages::{ChatCompletionRequest, ChatCompletionResponse, Model},
-    provider::{ChatCompletionStream, Provider, token},
+    provider::{ChatCompletionStream, ModelManager, Provider, token},
     request::RequestContext,
 };
 
@@ -28,11 +28,12 @@ pub(crate) struct AnthropicProvider {
     client: Client,
     base_url: String,
     name: String,
-    config: AnthropicConfig,
+    config: LlmProviderConfig,
+    model_manager: ModelManager,
 }
 
 impl AnthropicProvider {
-    pub fn new(name: String, config: AnthropicConfig) -> crate::Result<Self> {
+    pub fn new(name: String, config: LlmProviderConfig) -> crate::Result<Self> {
         let mut headers = HeaderMap::new();
 
         headers.insert(
@@ -65,10 +66,13 @@ impl AnthropicProvider {
             .clone()
             .unwrap_or_else(|| DEFAULT_ANTHROPIC_API_URL.to_string());
 
+        let model_manager = ModelManager::new(&config, "anthropic");
+
         Ok(Self {
             client,
             base_url,
             name,
+            model_manager,
             config,
         })
     }
@@ -78,13 +82,21 @@ impl AnthropicProvider {
 impl Provider for AnthropicProvider {
     async fn chat_completion(
         &self,
-        request: ChatCompletionRequest,
+        mut request: ChatCompletionRequest,
         context: &RequestContext,
     ) -> crate::Result<ChatCompletionResponse> {
         let url = format!("{}/messages", self.base_url);
         let api_key = token::get(self.config.forward_token, &self.config.api_key, context)?;
 
         let original_model = request.model.clone();
+
+        // Check if the model is configured and get the actual model name to use
+        let actual_model = self
+            .model_manager
+            .resolve_model(&request.model)
+            .ok_or_else(|| LlmError::ModelNotFound(format!("Model '{}' is not configured", request.model)))?;
+
+        request.model = actual_model;
         let anthropic_request = AnthropicRequest::from(request);
 
         let mut request_builder = self.client.post(&url);
@@ -135,56 +147,25 @@ impl Provider for AnthropicProvider {
         Ok(response)
     }
 
-    async fn list_models(&self, context: &RequestContext) -> Result<Vec<Model>, LlmError> {
-        let url = format!("{}/models", self.base_url);
-        let api_key = token::get(self.config.forward_token, &self.config.api_key, context)?;
-
-        let response = self
-            .client
-            .get(&url)
-            .header("x-api-key", api_key.expose_secret())
-            .send()
-            .await
-            .map_err(|e| LlmError::ConnectionError(format!("Failed to fetch models from Anthropic: {e}")))?;
-
-        let status = response.status();
-
-        if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            log::error!("Anthropic API error ({status}): {error_text}");
-
-            return Err(match status.as_u16() {
-                400 => LlmError::InvalidRequest(error_text),
-                401 => LlmError::AuthenticationFailed(error_text),
-                _ => LlmError::ProviderApiError {
-                    status: status.as_u16(),
-                    message: error_text,
-                },
-            });
-        }
-
-        // First get the response as text to log if parsing fails
-        let response_text = response.text().await.map_err(|e| {
-            log::error!("Failed to read Anthropic models response body: {e}");
-            LlmError::InternalError(None)
-        })?;
-
-        // Try to parse the response
-        let models_response: AnthropicModelsResponse = sonic_rs::from_str(&response_text).map_err(|e| {
-            log::error!("Failed to parse Anthropic models list response: {e}");
-            log::error!("Raw response that failed to parse: {response_text}");
-            LlmError::InternalError(None)
-        })?;
-
-        Ok(models_response.data.into_iter().map(Into::into).collect())
+    fn list_models(&self) -> Vec<Model> {
+        // Phase 3: Return only explicitly configured models, error if none
+        self.model_manager.get_configured_models()
     }
 
     async fn chat_completion_stream(
         &self,
-        request: ChatCompletionRequest,
+        mut request: ChatCompletionRequest,
         context: &RequestContext,
     ) -> crate::Result<ChatCompletionStream> {
         let url = format!("{}/messages", self.base_url);
+
+        // Check if the model is configured and get the actual model name to use
+        let actual_model = self
+            .model_manager
+            .resolve_model(&request.model)
+            .ok_or_else(|| LlmError::ModelNotFound(format!("Model '{}' is not configured", request.model)))?;
+
+        request.model = actual_model;
         let api_key = token::get(self.config.forward_token, &self.config.api_key, context)?;
 
         let mut anthropic_request = AnthropicRequest::from(request);

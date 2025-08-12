@@ -577,7 +577,10 @@ pub struct TestServerBuilder {
 impl TestServerBuilder {
     /// Spawn a test LLM provider and configure Nexus to connect to it
     pub async fn spawn_llm(&mut self, provider: impl llms::TestLlmProvider) {
-        let config = Box::new(provider).spawn().await.unwrap();
+        let boxed_provider = Box::new(provider);
+        let model_configs = boxed_provider.model_configs();
+        let mut config = boxed_provider.spawn().await.unwrap();
+        config.model_configs = model_configs;
         let provider_config_snippet = llms::generate_config_for_type(config.provider_type, &config);
 
         self.config.push_str(&provider_config_snippet);

@@ -99,9 +99,15 @@ type = "openai"
 api_key = "{{ env.OPENAI_API_KEY }}"
 forward_token = true
 
+# Model configuration (at least one model required per provider)
+[llm.providers.openai.models.gpt-4]
+[llm.providers.openai.models.gpt-3-5-turbo]
+
 [llm.providers.anthropic]
 type = "anthropic"
 api_key = "{{ env.ANTHROPIC_API_KEY }}"
+
+[llm.providers.anthropic.models.claude-3-5-sonnet-20241022]
 
 # MCP Server configuration
 [mcp.servers.github]
@@ -338,6 +344,14 @@ type = "openai"
 api_key = "{{ env.OPENAI_API_KEY }}"
 # Optional: Use a custom base URL (for Azure OpenAI, proxies, or compatible APIs)
 base_url = "https://api.openai.com/v1"  # Default
+
+# Model Configuration (REQUIRED - at least one model must be configured)
+[llm.providers.openai.models.gpt-4]
+# Optional: Rename the model for your users
+# rename = "smart-model"  # Users will see "openai/smart-model"
+
+[llm.providers.openai.models.gpt-3-5-turbo]
+# Models without rename use their original ID
 ```
 
 ##### Anthropic Provider
@@ -348,6 +362,11 @@ type = "anthropic"
 api_key = "{{ env.ANTHROPIC_API_KEY }}"
 # Optional: Use a custom base URL
 base_url = "https://api.anthropic.com/v1"  # Default
+
+# Model Configuration (REQUIRED - at least one model must be configured)
+[llm.providers.anthropic.models.claude-3-opus-20240229]
+
+[llm.providers.anthropic.models.claude-3-5-sonnet-20241022]
 ```
 
 ##### Google Provider
@@ -358,6 +377,58 @@ type = "google"
 api_key = "{{ env.GOOGLE_API_KEY }}"
 # Optional: Use a custom base URL
 base_url = "https://generativelanguage.googleapis.com/v1beta"  # Default
+
+# Model Configuration (REQUIRED - at least one model must be configured)
+# Note: Model IDs with dots must be quoted in TOML
+[llm.providers.google.models."gemini-1.5-flash"]
+
+[llm.providers.google.models.gemini-pro]
+```
+
+#### Model Configuration
+
+Each LLM provider requires explicit model configuration. This ensures that only the models you want to expose are available through Nexus.
+
+##### Basic Model Configuration
+
+```toml
+[llm.providers.openai]
+type = "openai"
+api_key = "{{ env.OPENAI_API_KEY }}"
+
+# Each model you want to expose must be explicitly configured
+[llm.providers.openai.models.gpt-4]
+[llm.providers.openai.models.gpt-3-5-turbo]
+```
+
+##### Model Renaming
+
+You can rename models to provide custom identifiers for your users:
+
+```toml
+[llm.providers.openai.models.gpt-4]
+rename = "smart-model"  # Users will access this as "openai/smart-model"
+
+[llm.providers.openai.models.gpt-3-5-turbo]
+rename = "fast-model"   # Users will access this as "openai/fast-model"
+```
+
+This is useful for:
+- Creating business-friendly model names
+- Abstracting away provider-specific model names
+- Providing consistent naming across different providers
+
+##### TOML Syntax for Model IDs
+
+Model IDs that contain dots must be quoted in TOML:
+
+```toml
+# Correct - dots in model IDs require quotes
+[llm.providers.google.models."gemini-1.5-flash"]
+[llm.providers.google.models."gemini-1.5-pro"]
+
+# Also correct - no dots, no quotes needed
+[llm.providers.google.models.gemini-pro]
 ```
 
 #### Multiple Provider Configuration
@@ -370,21 +441,31 @@ You can configure multiple instances of the same provider type with different na
 type = "openai"
 api_key = "{{ env.OPENAI_PRIMARY_KEY }}"
 
+[llm.providers.openai_primary.models.gpt-4]
+[llm.providers.openai_primary.models.gpt-3-5-turbo]
+
 # Secondary OpenAI account or Azure OpenAI
 [llm.providers.openai_secondary]
 type = "openai"
 api_key = "{{ env.OPENAI_SECONDARY_KEY }}"
 base_url = "https://my-azure-instance.openai.azure.com/v1"
 
+[llm.providers.openai_secondary.models.gpt-4]
+rename = "azure-gpt-4"  # Distinguish from primary account
+
 # Anthropic
 [llm.providers.claude]
 type = "anthropic"
 api_key = "{{ env.ANTHROPIC_API_KEY }}"
 
+[llm.providers.claude.models.claude-3-opus-20240229]
+
 # Google Gemini
 [llm.providers.gemini]
 type = "google"
 api_key = "{{ env.GOOGLE_API_KEY }}"
+
+[llm.providers.gemini.models."gemini-1.5-flash"]
 ```
 
 #### Token Forwarding
@@ -401,15 +482,22 @@ type = "openai"
 api_key = "{{ env.OPENAI_API_KEY }}"  # Fallback key (optional with token forwarding)
 forward_token = true  # Enable token forwarding for this provider
 
+[llm.providers.openai.models.gpt-4]
+[llm.providers.openai.models.gpt-3-5-turbo]
+
 [llm.providers.anthropic]
 type = "anthropic"
 # No api_key required when token forwarding is enabled
 forward_token = true
 
+[llm.providers.anthropic.models.claude-3-5-sonnet-20241022]
+
 [llm.providers.google]
 type = "google"
 api_key = "{{ env.GOOGLE_API_KEY }}"
 forward_token = false  # Explicitly disabled (default)
+
+[llm.providers.google.models."gemini-1.5-flash"]
 ```
 
 ##### Using Token Forwarding
