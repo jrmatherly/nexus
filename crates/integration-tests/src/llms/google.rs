@@ -15,8 +15,8 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
-use super::common::find_custom_response_in_text;
 use super::provider::{LlmProviderConfig, TestLlmProvider};
+use super::{common::find_custom_response_in_text, openai::ModelConfig};
 
 /// Builder for Google test server
 pub struct GoogleMock {
@@ -97,7 +97,13 @@ impl TestLlmProvider for GoogleMock {
         &self.name
     }
 
+    fn model_configs(&self) -> Vec<ModelConfig> {
+        // Return model configs based on the models in the mock
+        self.models.iter().map(ModelConfig::new).collect()
+    }
+
     async fn spawn(self: Box<Self>) -> anyhow::Result<LlmProviderConfig> {
+        let model_configs = self.model_configs();
         let state = Arc::new(TestGoogleState {
             models: self.models,
             custom_responses: self.custom_responses,
@@ -124,6 +130,7 @@ impl TestLlmProvider for GoogleMock {
             name: self.name.clone(),
             address,
             provider_type: super::provider::ProviderType::Google,
+            model_configs,
         })
     }
 }

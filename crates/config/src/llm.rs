@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use secrecy::SecretString;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 /// Configuration for an individual model within a provider.
 #[derive(Debug, Clone, Deserialize)]
@@ -90,8 +90,31 @@ pub struct LlmProviderConfig {
     pub forward_token: bool,
 
     /// Explicitly configured models for this provider.
-    #[serde(default)]
+    /// Phase 3: At least one model must be configured.
+    #[serde(deserialize_with = "deserialize_non_empty_models_with_default")]
     pub models: BTreeMap<String, ModelConfig>,
+}
+
+/// Custom deserializer that ensures at least one model is configured.
+/// This handles both missing field (uses default) and empty map cases.
+fn deserialize_non_empty_models_with_default<'de, D>(deserializer: D) -> Result<BTreeMap<String, ModelConfig>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    // First deserialize as Option to handle missing field
+    let models_opt = Option::<BTreeMap<String, ModelConfig>>::deserialize(deserializer)?;
+
+    // Get the models map, using empty map if field was missing
+    let models = models_opt.unwrap_or_default();
+
+    // Now validate that we have at least one model
+    if models.is_empty() {
+        Err(Error::custom("At least one model must be configured for each provider"))
+    } else {
+        Ok(models)
+    }
 }
 
 #[cfg(test)]
@@ -122,6 +145,10 @@ mod tests {
             [providers.openai]
             type = "openai"
             api_key = "${OPENAI_API_KEY}"
+            
+            [providers.openai.models.gpt-4]
+            
+            [providers.openai.models.gpt-3-5-turbo]
         "#};
 
         let config: LlmConfig = toml::from_str(config).unwrap();
@@ -138,7 +165,14 @@ mod tests {
                     ),
                     base_url: None,
                     forward_token: false,
-                    models: {},
+                    models: {
+                        "gpt-3-5-turbo": ModelConfig {
+                            rename: None,
+                        },
+                        "gpt-4": ModelConfig {
+                            rename: None,
+                        },
+                    },
                 },
             },
         }
@@ -154,6 +188,10 @@ mod tests {
             [providers.anthropic]
             type = "anthropic"
             api_key = "{{ env.ANTHROPIC_API_KEY }}"
+            
+            [providers.anthropic.models.claude-3-opus]
+            
+            [providers.anthropic.models.claude-3-sonnet]
         "#};
 
         let config: LlmConfig = toml::from_str(config).unwrap();
@@ -170,7 +208,14 @@ mod tests {
                     ),
                     base_url: None,
                     forward_token: false,
-                    models: {},
+                    models: {
+                        "claude-3-opus": ModelConfig {
+                            rename: None,
+                        },
+                        "claude-3-sonnet": ModelConfig {
+                            rename: None,
+                        },
+                    },
                 },
             },
         }
@@ -183,6 +228,10 @@ mod tests {
             [providers.google]
             type = "google"
             api_key = "{{ env.GOOGLE_KEY }}"
+            
+            [providers.google.models.gemini-pro]
+            
+            [providers.google.models.gemini-pro-vision]
         "#};
 
         let config: LlmConfig = toml::from_str(config).unwrap();
@@ -199,7 +248,14 @@ mod tests {
                     ),
                     base_url: None,
                     forward_token: false,
-                    models: {},
+                    models: {
+                        "gemini-pro": ModelConfig {
+                            rename: None,
+                        },
+                        "gemini-pro-vision": ModelConfig {
+                            rename: None,
+                        },
+                    },
                 },
             },
         }
@@ -215,14 +271,20 @@ mod tests {
             [providers.openai]
             type = "openai"
             api_key = "${OPENAI_API_KEY}"
+            
+            [providers.openai.models.gpt-4]
 
             [providers.anthropic]
             type = "anthropic"
             api_key = "{{ env.ANTHROPIC_API_KEY }}"
+            
+            [providers.anthropic.models.claude-3-opus]
 
             [providers.google]
             type = "google"
             api_key = "{{ env.GOOGLE_KEY }}"
+            
+            [providers.google.models.gemini-pro]
         "#};
 
         let config: LlmConfig = toml::from_str(config).unwrap();
@@ -239,7 +301,11 @@ mod tests {
                     ),
                     base_url: None,
                     forward_token: false,
-                    models: {},
+                    models: {
+                        "claude-3-opus": ModelConfig {
+                            rename: None,
+                        },
+                    },
                 },
                 "google": LlmProviderConfig {
                     provider_type: Google,
@@ -248,7 +314,11 @@ mod tests {
                     ),
                     base_url: None,
                     forward_token: false,
-                    models: {},
+                    models: {
+                        "gemini-pro": ModelConfig {
+                            rename: None,
+                        },
+                    },
                 },
                 "openai": LlmProviderConfig {
                     provider_type: Openai,
@@ -257,7 +327,11 @@ mod tests {
                     ),
                     base_url: None,
                     forward_token: false,
-                    models: {},
+                    models: {
+                        "gpt-4": ModelConfig {
+                            rename: None,
+                        },
+                    },
                 },
             },
         }
@@ -319,6 +393,8 @@ mod tests {
             [providers.openai]
             type = "openai"
             api_key = "sk-1234567890abcdef"
+            
+            [providers.openai.models.gpt-4]
         "#};
 
         let config: LlmConfig = toml::from_str(config).unwrap();
@@ -335,7 +411,11 @@ mod tests {
                     ),
                     base_url: None,
                     forward_token: false,
-                    models: {},
+                    models: {
+                        "gpt-4": ModelConfig {
+                            rename: None,
+                        },
+                    },
                 },
             },
         }
@@ -503,16 +583,22 @@ mod tests {
             type = "openai"
             api_key = "sk-fallback-key"
             forward_token = true
+            
+            [providers.openai.models.gpt-4]
 
             [providers.anthropic]
             type = "anthropic"
             forward_token = true
             # No api_key provided - relies entirely on token forwarding
+            
+            [providers.anthropic.models.claude-3-opus]
 
             [providers.google]
             type = "google"
             api_key = "{{ env.GOOGLE_KEY }}"
             forward_token = false  # Explicitly disabled
+            
+            [providers.google.models.gemini-pro]
         "#};
 
         let config: LlmConfig = toml::from_str(config).unwrap();
@@ -527,7 +613,11 @@ mod tests {
                     api_key: None,
                     base_url: None,
                     forward_token: true,
-                    models: {},
+                    models: {
+                        "claude-3-opus": ModelConfig {
+                            rename: None,
+                        },
+                    },
                 },
                 "google": LlmProviderConfig {
                     provider_type: Google,
@@ -536,7 +626,11 @@ mod tests {
                     ),
                     base_url: None,
                     forward_token: false,
-                    models: {},
+                    models: {
+                        "gemini-pro": ModelConfig {
+                            rename: None,
+                        },
+                    },
                 },
                 "openai": LlmProviderConfig {
                     provider_type: Openai,
@@ -545,7 +639,11 @@ mod tests {
                     ),
                     base_url: None,
                     forward_token: true,
-                    models: {},
+                    models: {
+                        "gpt-4": ModelConfig {
+                            rename: None,
+                        },
+                    },
                 },
             },
         }

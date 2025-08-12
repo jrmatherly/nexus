@@ -16,10 +16,34 @@ use tokio::net::TcpListener;
 use super::common::find_custom_response;
 use super::provider::{LlmProviderConfig, TestLlmProvider};
 
+/// Model configuration for tests
+#[derive(Clone)]
+pub struct ModelConfig {
+    /// The user-facing model ID (used in config)
+    pub id: String,
+    /// Optional rename - the actual provider model name
+    pub rename: Option<String>,
+}
+
+impl ModelConfig {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            rename: None,
+        }
+    }
+
+    pub fn with_rename(mut self, rename: impl Into<String>) -> Self {
+        self.rename = Some(rename.into());
+        self
+    }
+}
+
 /// Builder for OpenAI test server
 pub struct OpenAIMock {
     name: String,
     models: Vec<String>,
+    model_configs: Option<Vec<ModelConfig>>,
     custom_responses: HashMap<String, String>,
     error_type: Option<ErrorType>,
     streaming_enabled: bool,
@@ -47,6 +71,7 @@ impl OpenAIMock {
                 "gpt-4".to_string(),
                 "gpt-4-turbo".to_string(),
             ],
+            model_configs: None,
             custom_responses: HashMap::new(),
             error_type: None,
             streaming_enabled: false,
@@ -57,6 +82,11 @@ impl OpenAIMock {
 
     pub fn with_models(mut self, models: Vec<String>) -> Self {
         self.models = models;
+        self
+    }
+
+    pub fn with_model_configs(mut self, configs: Vec<ModelConfig>) -> Self {
+        self.model_configs = Some(configs);
         self
     }
 
@@ -148,7 +178,15 @@ impl TestLlmProvider for OpenAIMock {
         &self.name
     }
 
+    fn model_configs(&self) -> Vec<ModelConfig> {
+        self.model_configs.clone().unwrap_or_else(|| {
+            // Default models if none specified
+            vec![ModelConfig::new("gpt-3.5-turbo"), ModelConfig::new("gpt-4")]
+        })
+    }
+
     async fn spawn(self: Box<Self>) -> anyhow::Result<LlmProviderConfig> {
+        let model_configs = self.model_configs();
         let state = Arc::new(TestLlmState {
             models: self.models,
             custom_responses: self.custom_responses,
@@ -177,6 +215,7 @@ impl TestLlmProvider for OpenAIMock {
             name: self.name.clone(),
             address,
             provider_type: super::provider::ProviderType::OpenAI,
+            model_configs,
         })
     }
 }

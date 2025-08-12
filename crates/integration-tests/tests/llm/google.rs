@@ -14,7 +14,32 @@ async fn list_models() {
     insta::assert_json_snapshot!(body, @r#"
     {
       "object": "list",
-      "data": []
+      "data": [
+        {
+          "id": "google/gemini-1.5-flash",
+          "object": "model",
+          "created": 1719475200,
+          "owned_by": "google"
+        },
+        {
+          "id": "google/gemini-1.5-pro",
+          "object": "model",
+          "created": 1719475200,
+          "owned_by": "google"
+        },
+        {
+          "id": "google/gemini-pro",
+          "object": "model",
+          "created": 1719475200,
+          "owned_by": "google"
+        },
+        {
+          "id": "google/text-embedding-004",
+          "object": "model",
+          "created": 1719475200,
+          "owned_by": "google"
+        }
+      ]
     }
     "#);
 }
@@ -83,7 +108,7 @@ async fn handles_system_messages() {
 
     // Test with system message
     let request = json!({
-        "model": "google/gemini-1.5-pro",
+        "model": "google/gemini-pro",
         "messages": [
             {
                 "role": "system",
@@ -106,7 +131,7 @@ async fn handles_system_messages() {
       "id": "[id]",
       "object": "chat.completion",
       "created": "[created]",
-      "model": "google/gemini-1.5-pro",
+      "model": "google/gemini-pro",
       "choices": [
         {
           "index": 0,
@@ -388,7 +413,20 @@ async fn custom_models() {
     insta::assert_json_snapshot!(body, @r#"
     {
       "object": "list",
-      "data": []
+      "data": [
+        {
+          "id": "google/gemini-custom",
+          "object": "model",
+          "created": 1719475200,
+          "owned_by": "google"
+        },
+        {
+          "id": "google/gemini-experimental",
+          "object": "model",
+          "created": 1719475200,
+          "owned_by": "google"
+        }
+      ]
     }
     "#);
 }

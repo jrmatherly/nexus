@@ -64,7 +64,7 @@ pub(crate) trait Provider: Send + Sync {
     }
 
     /// List available models for this provider.
-    async fn list_models(&self, context: &RequestContext) -> crate::Result<Vec<Model>>;
+    fn list_models(&self) -> Vec<Model>;
 
     /// Get the provider name.
     fn name(&self) -> &str;

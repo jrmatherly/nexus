@@ -1774,10 +1774,14 @@ mod tests {
             [llm.providers.openai]
             type = "openai"
             api_key = "${OPENAI_API_KEY}"
+            
+            [llm.providers.openai.models.gpt-4]
 
             [llm.providers.anthropic]
             type = "anthropic"
             api_key = "{{ env.ANTHROPIC_API_KEY }}"
+            
+            [llm.providers.anthropic.models.claude-3-opus]
         "#};
 
         let config: Config = toml::from_str(config).unwrap();
@@ -1794,7 +1798,11 @@ mod tests {
                     ),
                     base_url: None,
                     forward_token: false,
-                    models: {},
+                    models: {
+                        "claude-3-opus": ModelConfig {
+                            rename: None,
+                        },
+                    },
                 },
                 "openai": LlmProviderConfig {
                     provider_type: Openai,
@@ -1803,7 +1811,11 @@ mod tests {
                     ),
                     base_url: None,
                     forward_token: false,
-                    models: {},
+                    models: {
+                        "gpt-4": ModelConfig {
+                            rename: None,
+                        },
+                    },
                 },
             },
         }
@@ -2084,6 +2096,8 @@ mod tests {
             [llm.providers.openai]
             type = "openai"
             api_key = "test-key"
+            
+            [llm.providers.openai.models.gpt-4]
         "#};
 
         let config: Config = toml::from_str(config_str).unwrap();
@@ -2100,6 +2114,8 @@ mod tests {
             [llm.providers.openai]
             type = "openai"
             api_key = "test-key"
+            
+            [llm.providers.openai.models.gpt-4]
         "#};
 
         let config: Config = toml::from_str(config_str).unwrap();
@@ -2116,6 +2132,8 @@ mod tests {
             [llm.providers.openai]
             type = "openai"
             api_key = "test-key"
+            
+            [llm.providers.openai.models.gpt-4]
         "#};
 
         let config: Config = toml::from_str(config_str).unwrap();

@@ -27,13 +27,9 @@ impl ModelManager {
     /// Check if a model is configured and resolve its actual name.
     ///
     /// Returns the renamed model if configured, or the original name if rename is not specified.
-    /// If no models are configured (backward compatibility), returns the requested model.
+    /// Returns None if the model is not configured.
     pub fn resolve_model(&self, requested_model: &str) -> Option<String> {
-        // If no models are configured, allow any model (backward compatibility)
-        if self.models.is_empty() {
-            return Some(requested_model.to_string());
-        }
-
+        // Phase 3: Models must be explicitly configured
         // Check if the requested model is explicitly configured
         self.models
             .get(requested_model)
@@ -42,21 +38,14 @@ impl ModelManager {
 
     /// Get list of configured models for the /models endpoint.
     ///
-    /// Returns an empty list when no models are configured (Phase 2 behavior).
-    /// In Phase 3, this would return an error instead.
+    /// Returns an error if no models are configured (Phase 3 enforcement).
     pub fn get_configured_models(&self) -> Vec<Model> {
-        if self.models.is_empty() {
-            // Return empty list when no models configured
-            // In Phase 3, this would return an error instead
-            return Vec::new();
-        }
-
         self.models
             .keys()
             .map(|model_id| Model {
                 id: model_id.clone(),
                 object: ObjectType::Model,
-                created: 1719475200, // Fixed timestamp for Phase 2
+                created: 1719475200, // Fixed timestamp
                 owned_by: self.owner.clone(),
             })
             .collect()
@@ -69,7 +58,7 @@ mod tests {
     use config::ModelConfig;
 
     #[test]
-    fn empty_config_allows_any_model() {
+    fn empty_config_rejects_all_models() {
         let config = LlmProviderConfig {
             provider_type: config::ProviderType::Openai,
             api_key: None,
@@ -80,8 +69,9 @@ mod tests {
 
         let manager = ModelManager::new(&config, "test");
 
-        assert_eq!(manager.resolve_model("gpt-4"), Some("gpt-4".to_string()));
-        assert_eq!(manager.resolve_model("any-model"), Some("any-model".to_string()));
+        // Phase 3: No models configured means all models are rejected
+        assert_eq!(manager.resolve_model("gpt-4"), None);
+        assert_eq!(manager.resolve_model("any-model"), None);
     }
 
     #[test]
@@ -151,21 +141,5 @@ mod tests {
         assert!(model_list.iter().any(|m| m.id == "gpt-4"));
         assert!(model_list.iter().any(|m| m.id == "gpt-3.5-turbo"));
         assert!(model_list.iter().all(|m| m.owned_by == "openai"));
-    }
-
-    #[test]
-    fn empty_models_returns_empty_list() {
-        let config = LlmProviderConfig {
-            provider_type: config::ProviderType::Google,
-            api_key: None,
-            base_url: None,
-            forward_token: false,
-            models: BTreeMap::new(),
-        };
-
-        let manager = ModelManager::new(&config, "google");
-        let model_list = manager.get_configured_models();
-
-        assert!(model_list.is_empty());
     }
 }

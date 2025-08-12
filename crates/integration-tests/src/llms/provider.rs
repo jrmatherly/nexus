@@ -2,6 +2,8 @@ use indoc::formatdoc;
 use std::future::Future;
 use std::net::SocketAddr;
 
+use super::openai::ModelConfig;
+
 #[derive(Clone, Debug, Copy)]
 pub enum ProviderType {
     OpenAI,
@@ -14,6 +16,7 @@ pub struct LlmProviderConfig {
     pub name: String,
     pub address: SocketAddr,
     pub provider_type: ProviderType,
+    pub model_configs: Vec<ModelConfig>,
 }
 
 /// Trait for test LLM providers
@@ -23,6 +26,9 @@ pub trait TestLlmProvider: Send + Sync + 'static {
 
     /// Get the provider name (used as the config key)
     fn name(&self) -> &str;
+
+    /// Get model configurations
+    fn model_configs(&self) -> Vec<ModelConfig>;
 
     /// Start the mock server and return its configuration
     fn spawn(self: Box<Self>) -> impl Future<Output = anyhow::Result<LlmProviderConfig>> + Send;
@@ -35,38 +41,31 @@ pub trait TestLlmProvider: Send + Sync + 'static {
 
 /// Generate configuration for a given provider type
 pub fn generate_config_for_type(provider_type: ProviderType, config: &LlmProviderConfig) -> String {
-    match provider_type {
-        ProviderType::OpenAI => formatdoc! {r#"
-
-            [llm.providers.{}]
-            type = "openai"
-            api_key = "test-key"
-            base_url = "http://{}/v1"
-            
-            # Phase 2: Empty models map means allow all models (backward compatibility)
-            # Tests still work without explicit model configs
-        "#, config.name, config.address},
-
-        ProviderType::Anthropic => formatdoc! {r#"
-
-            [llm.providers.{}]
-            type = "anthropic"
-            api_key = "test-key"
-            base_url = "http://{}/v1"
-            
-            # Phase 2: Empty models map means allow all models (backward compatibility)
-            # Tests still work without explicit model configs
-        "#, config.name, config.address},
-
-        ProviderType::Google => formatdoc! {r#"
-
-            [llm.providers.{}]
-            type = "google"
-            api_key = "test-key"
-            base_url = "http://{}/v1beta"
-            
-            # Phase 2: Empty models map means allow all models (backward compatibility)
-            # Tests still work without explicit model configs
-        "#, config.name, config.address},
+    // Generate model configuration section
+    let mut models_section = String::new();
+    for model_config in &config.model_configs {
+        // Use quoted keys for model IDs to handle dots
+        models_section.push_str(&format!(
+            "\n            [llm.providers.{}.models.\"{}\"]",
+            config.name, model_config.id
+        ));
+        if let Some(rename) = &model_config.rename {
+            models_section.push_str(&format!("\n            rename = \"{}\"", rename));
+        }
     }
+
+    let (provider_type_str, base_url_path) = match provider_type {
+        ProviderType::OpenAI => ("openai", "/v1"),
+        ProviderType::Anthropic => ("anthropic", "/v1"),
+        ProviderType::Google => ("google", "/v1beta"),
+    };
+
+    formatdoc! {r#"
+
+        [llm.providers.{}]
+        type = "{}"
+        api_key = "test-key"
+        base_url = "http://{}{}"
+        {}
+    "#, config.name, provider_type_str, config.address, base_url_path, models_section}
 }

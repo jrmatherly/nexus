@@ -97,9 +97,8 @@ async fn chat_completions(
 }
 
 /// Handle list models requests.
-async fn list_models(State(server): State<Arc<LlmServer>>, headers: HeaderMap) -> Result<impl IntoResponse> {
-    let context = request::extract_context(&headers);
-    let response = server.list_models(&context).await?;
+async fn list_models(State(server): State<Arc<LlmServer>>) -> Result<impl IntoResponse> {
+    let response = server.list_models();
 
     log::debug!("Returning {} models", response.data.len());
     Ok(Json(response))

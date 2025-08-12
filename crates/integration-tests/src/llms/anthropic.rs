@@ -14,8 +14,8 @@ use futures::stream;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
-use super::common::find_custom_response;
 use super::provider::{LlmProviderConfig, TestLlmProvider};
+use super::{common::find_custom_response, openai::ModelConfig};
 
 /// Builder for Anthropic test server
 pub struct AnthropicMock {
@@ -66,7 +66,13 @@ impl TestLlmProvider for AnthropicMock {
         &self.name
     }
 
+    fn model_configs(&self) -> Vec<ModelConfig> {
+        // Return model configs based on the models in the mock
+        self.models.iter().map(ModelConfig::new).collect()
+    }
+
     async fn spawn(self: Box<Self>) -> anyhow::Result<LlmProviderConfig> {
+        let model_configs = self.model_configs();
         let state = Arc::new(TestAnthropicState {
             models: self.models,
             custom_responses: self.custom_responses,
@@ -92,6 +98,7 @@ impl TestLlmProvider for AnthropicMock {
             name: self.name.clone(),
             address,
             provider_type: super::provider::ProviderType::Anthropic,
+            model_configs,
         })
     }
 }

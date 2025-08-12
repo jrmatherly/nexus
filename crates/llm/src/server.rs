@@ -1,25 +1,17 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use config::{LlmConfig, ProviderType};
-use futures::{
-    lock::Mutex,
-    stream::{FuturesUnordered, StreamExt},
-};
+use futures::stream::StreamExt;
 use itertools::Itertools;
-use mini_moka::sync::Cache;
 
 use crate::{
     error::LlmError,
-    messages::{ChatCompletionRequest, ChatCompletionResponse, ModelsResponse, ObjectType},
+    messages::{ChatCompletionRequest, ChatCompletionResponse, Model, ModelsResponse, ObjectType},
     provider::{
         ChatCompletionStream, Provider, anthropic::AnthropicProvider, google::GoogleProvider, openai::OpenAIProvider,
     },
     request::RequestContext,
 };
-
-// Cache models for 5 minutes
-const MODELS_CACHE_DURATION: Duration = Duration::from_secs(300);
 
 #[derive(Clone)]
 pub(crate) struct LlmServer {
@@ -28,8 +20,6 @@ pub(crate) struct LlmServer {
 
 struct LlmServerInner {
     providers: Vec<Box<dyn Provider>>,
-    models_cache: Cache<(), ModelsResponse>,
-    refresh_lock: Mutex<()>,
 }
 
 impl LlmServer {
@@ -65,15 +55,8 @@ impl LlmServer {
             log::debug!("LLM server initialized with {} active provider(s)", providers.len());
         }
 
-        // Create cache with TTL
-        let models_cache = Cache::builder().time_to_live(MODELS_CACHE_DURATION).build();
-
         Ok(Self {
-            shared: Arc::new(LlmServerInner {
-                providers,
-                models_cache,
-                refresh_lock: Mutex::new(()),
-            }),
+            shared: Arc::new(LlmServerInner { providers }),
         })
     }
 
@@ -163,76 +146,24 @@ impl LlmServer {
     }
 
     /// List available models.
-    pub async fn list_models(&self, context: &RequestContext) -> crate::Result<ModelsResponse> {
-        // Check cache first
-        if let Some(cached) = self.shared.models_cache.get(&()) {
-            log::debug!("Returning cached models (cache hit)");
-            return Ok(cached);
-        }
-
-        let _guard = self.shared.refresh_lock.lock().await;
-
-        if let Some(cached) = self.shared.models_cache.get(&()) {
-            log::debug!("Returning cached models (cache hit)");
-            return Ok(cached);
-        }
-
-        log::debug!(
-            "Cache miss, fetching models from {} providers",
-            self.shared.providers.len()
-        );
-
-        // Create futures for fetching models from each provider concurrently
-        let mut model_futures = FuturesUnordered::new();
+    pub fn list_models(&self) -> ModelsResponse {
+        let mut data = Vec::new();
 
         for provider in &self.shared.providers {
-            let provider_name = provider.name().to_string();
-            let provider_ref = provider.as_ref();
-            let ctx = context.clone();
-
-            model_futures.push(async move {
-                log::debug!("Fetching models from provider: {provider_name}");
-
-                let models = match provider_ref.list_models(&ctx).await {
-                    Ok(models) => models,
-                    Err(e) => {
-                        log::warn!("Failed to list models from provider {provider_name}: {e}");
-
-                        return Err(e);
-                    }
-                };
-
-                // Prefix model IDs with provider name for clarity
-                let prefixed_models: Vec<_> = models
-                    .into_iter()
-                    .map(|mut model| {
-                        model.id = format!("{provider_name}/{}", model.id);
-                        model
-                    })
-                    .collect();
-
-                Ok(prefixed_models)
-            });
-        }
-
-        // Collect results from all providers concurrently
-        let mut all_models = Vec::new();
-        while let Some(result) = model_futures.next().await {
-            if let Ok(models) = result {
-                all_models.extend(models);
+            for model in provider.list_models() {
+                data.push(Model {
+                    id: format!("{}/{}", provider.name(), model.id),
+                    object: model.object,
+                    created: model.created,
+                    owned_by: model.owned_by,
+                })
             }
-            // Errors are already logged above, so we just skip them
         }
 
-        let response = ModelsResponse {
+        ModelsResponse {
             object: ObjectType::List,
-            data: all_models,
-        };
-
-        // Cache the response
-        self.shared.models_cache.insert((), response.clone());
-
-        Ok(response)
+            data,
+        }
     }
 
     fn get_provider(&self, name: &str) -> Option<&dyn Provider> {

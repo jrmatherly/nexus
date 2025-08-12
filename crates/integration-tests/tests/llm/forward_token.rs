@@ -64,6 +64,10 @@ async fn forward_token_enabled_uses_provided_key() {
         api_key = "fallback-key"
         forward_token = true
         base_url = "http://{}/v1"
+        
+        [llm.providers.test_openai_forward_token.models.gpt-4]
+        
+        [llm.providers.test_openai_forward_token.models.gpt-3-5-turbo]
     "#, config_data.address};
 
     let server = TestServer::builder().build(&config).await;
@@ -126,6 +130,10 @@ async fn forward_token_enabled_falls_back_to_configured_key() {
         api_key = "fallback-key"
         forward_token = true
         base_url = "http://{}/v1"
+        
+        [llm.providers.test_openai_fallback.models.gpt-4]
+        
+        [llm.providers.test_openai_fallback.models.gpt-3-5-turbo]
     "#, config_data.address};
 
     let server = TestServer::builder().build(&config).await;
@@ -171,6 +179,8 @@ async fn forward_token_enabled_no_keys_returns_error() {
         # No api_key configured
         forward_token = true
         base_url = "http://127.0.0.1:1234/v1"  # Won't actually be used
+        
+        [llm.providers.test_openai_no_keys.models.gpt-4]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -218,6 +228,10 @@ async fn forward_token_works_with_anthropic() {
         forward_token = true
         api_key = "fallback-anthropic-key"
         base_url = "http://{}/v1"
+        
+        [llm.providers.test_anthropic_forward_token.models.claude-3-opus-20240229]
+        
+        [llm.providers.test_anthropic_forward_token.models.claude-3-5-sonnet-20241022]
     "#, config_data.address};
 
     let server = TestServer::builder().build(&config).await;
@@ -281,6 +295,10 @@ async fn forward_token_works_with_google() {
         forward_token = true
         api_key = "fallback-google-key"
         base_url = "http://{}/v1beta"
+        
+        [llm.providers.test_google_forward_token.models."gemini-1.5-flash"]
+        
+        [llm.providers.test_google_forward_token.models."gemini-pro"]
     "#, config_data.address};
 
     let server = TestServer::builder().build(&config).await;

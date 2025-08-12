@@ -147,9 +147,9 @@ impl Provider for AnthropicProvider {
         Ok(response)
     }
 
-    async fn list_models(&self, _context: &RequestContext) -> Result<Vec<Model>, LlmError> {
-        // Phase 2: Return only explicitly configured models
-        Ok(self.model_manager.get_configured_models())
+    fn list_models(&self) -> Vec<Model> {
+        // Phase 3: Return only explicitly configured models, error if none
+        self.model_manager.get_configured_models()
     }
 
     async fn chat_completion_stream(
