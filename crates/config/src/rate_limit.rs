@@ -20,15 +20,31 @@ pub struct TokenRateLimit {
     pub output_buffer: Option<u64>,
 }
 
-/// Token rate limits configuration with group-specific overrides.
-#[derive(Debug, Clone, Deserialize, Default)]
+/// Per-user rate limits with group-specific overrides.
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct TokenRateLimitsConfig {
-    /// Default rate limit for all clients/groups.
-    pub default: Option<TokenRateLimit>,
-    /// Group-specific rate limits.
+pub struct PerUserRateLimits {
+    /// Default per-user rate limit.
+    pub limit: u64,
+    /// Time window for the rate limit.
+    #[serde(deserialize_with = "deserialize_duration")]
+    pub interval: Duration,
+    /// Buffer for output token estimation.
+    #[serde(default)]
+    pub output_buffer: Option<u64>,
+    /// Group-specific per-user rate limits.
     #[serde(default)]
     pub groups: BTreeMap<String, TokenRateLimit>,
+}
+
+/// Token rate limits configuration.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenRateLimitsConfig {
+    /// Per-user rate limits (individual limits for each user).
+    #[serde(default)]
+    pub per_user: Option<PerUserRateLimits>,
+    // Future: per_group for shared pool limits
 }
 
 /// Rate limiting configuration for the server.

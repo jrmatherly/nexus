@@ -379,6 +379,13 @@ async fn case_sensitive_header() {
 
         [server.health]
         enabled = true
+
+        [mcp]
+        enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;

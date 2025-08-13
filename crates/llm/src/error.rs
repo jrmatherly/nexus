@@ -30,8 +30,8 @@ pub(crate) enum LlmError {
     InvalidRequest(String),
 
     /// Rate limit exceeded.
-    #[error("Rate limit exceeded: {0}")]
-    RateLimitExceeded(String),
+    #[error("Rate limit exceeded: {message}")]
+    RateLimitExceeded { message: String },
 
     /// Insufficient quota or credits.
     #[error("Insufficient quota: {0}")]
@@ -66,7 +66,7 @@ impl LlmError {
             Self::AuthenticationFailed(_) => StatusCode::UNAUTHORIZED,
             Self::InsufficientQuota(_) => StatusCode::FORBIDDEN,
             Self::ProviderNotFound(_) | Self::ModelNotFound(_) => StatusCode::NOT_FOUND,
-            Self::RateLimitExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
+            Self::RateLimitExceeded { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::ConnectionError(_) => StatusCode::BAD_GATEWAY,
             Self::ProviderApiError { status, .. } => {
                 // Map provider status codes to our status codes
@@ -93,7 +93,7 @@ impl LlmError {
             Self::AuthenticationFailed(_) => "authentication_error",
             Self::InsufficientQuota(_) => "insufficient_quota",
             Self::ProviderNotFound(_) | Self::ModelNotFound(_) => "not_found_error",
-            Self::RateLimitExceeded(_) => "rate_limit_error",
+            Self::RateLimitExceeded { .. } => "rate_limit_error",
             Self::ConnectionError(_) | Self::ProviderApiError { .. } => "api_error",
             Self::InternalError(_) => "internal_error",
         }
@@ -133,6 +133,8 @@ impl IntoResponse for LlmError {
             }
         }
 
+        // No Retry-After headers to maintain consistency with downstream LLM providers
+
         // For internal errors, only show provider messages, not Nexus internals
         let message = match &self {
             Self::InternalError(Some(provider_msg)) => provider_msg.clone(),
@@ -148,6 +150,7 @@ impl IntoResponse for LlmError {
             },
         };
 
+        // Build response without Retry-After headers for consistency with downstream providers
         (status, Json(error_response)).into_response()
     }
 }

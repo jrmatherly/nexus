@@ -10,6 +10,7 @@ mod forward_token;
 mod google;
 mod model_configuration;
 mod openai;
+mod token_limiting;
 
 #[tokio::test]
 async fn multiple_providers_work_together() {

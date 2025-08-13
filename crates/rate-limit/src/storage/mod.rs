@@ -26,6 +26,15 @@ pub trait RateLimitStorage: Send + Sync {
         limit: u32,
         interval: Duration,
     ) -> Result<RateLimitResult, StorageError>;
+
+    /// Check and potentially consume multiple tokens for the given key.
+    async fn check_and_consume_tokens(
+        &self,
+        key: &str,
+        tokens: u32,
+        limit: u32,
+        interval: Duration,
+    ) -> Result<RateLimitResult, StorageError>;
 }
 
 /// Errors that can occur in storage backends.

@@ -10,11 +10,11 @@ use std::{
 };
 
 use axum::{body::Body, extract::ConnectInfo};
-use http::{HeaderValue, Request, Response, StatusCode, header::RETRY_AFTER};
+use http::{Request, Response, StatusCode};
 use rate_limit::{RateLimitError, RateLimitManager, RateLimitRequest};
 use tower::Layer;
 
-use crate::client_identification::ClientIdentity;
+use config::ClientIdentity;
 
 #[derive(Clone)]
 pub struct RateLimitLayer(Arc<RateLimitManager>);
@@ -92,8 +92,7 @@ where
             // Check rate limits
             let err = match manager.check_request(&rate_limit_request).await {
                 Ok(()) => {
-                    // Request allowed, continue
-                    // Note: client identity is already in request extensions from ClientIdentificationLayer
+                    // Request allowed, continue to next handler
                     return next.call(req).await;
                 }
                 Err(err) => err,
@@ -108,21 +107,13 @@ where
                 _ => (StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded"),
             };
 
-            let mut response = Response::builder()
+            let response = Response::builder()
                 .status(status)
                 .header("Content-Type", "text/plain")
                 .body(Body::from(message))
                 .unwrap();
 
-            // Add Retry-After header if we have retry information
-            let Some(retry_after) = err.retry_after() else {
-                return Ok(response);
-            };
-
-            if let Ok(header_value) = HeaderValue::from_str(&retry_after.as_secs().to_string()) {
-                response.headers_mut().insert(RETRY_AFTER, header_value);
-            }
-
+            // No Retry-After headers are sent to maintain consistency with downstream LLM providers
             Ok(response)
         })
     }

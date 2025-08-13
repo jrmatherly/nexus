@@ -1,5 +1,6 @@
 mod middleware;
 
+pub use config::ClientIdentity;
 use config::{ClientIdentificationConfig, IdentificationSource};
 use http::Request;
 use jwt_compact::Token;
@@ -7,20 +8,16 @@ pub use middleware::ClientIdentificationLayer;
 
 use crate::auth::claims::CustomClaims;
 
-/// Represents the identified client and their group membership.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClientIdentity {
-    /// The client identifier (e.g., user ID, API key ID)
-    pub client_id: String,
-    /// The group the client belongs to (e.g., "free", "pro", "enterprise")
-    pub group: Option<String>,
-}
-
 /// Errors that can occur during client identification extraction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientIdentificationError {
     /// The client is in a group that's not in the allowed list
-    UnauthorizedGroup { group: String, allowed_groups: Vec<String> },
+    UnauthorizedGroup {
+        /// The group the client belongs to
+        group: String,
+        /// The list of allowed groups
+        allowed_groups: Vec<String>,
+    },
     /// Client identification is required but not found
     MissingIdentification,
 }
@@ -64,35 +61,21 @@ pub fn extract_client_identity<B>(
         return Ok(None);
     }
 
-    // Extract client ID if configured
-    let client_id = if let Some(source) = &config.client_id {
-        let id = extract_from_source(req, source).ok_or(ClientIdentificationError::MissingIdentification)?;
+    // Extract JWT token once if any source uses it
+    let jwt_token = req.extensions().get::<Token<CustomClaims>>();
 
-        Some(id)
-    } else {
-        None
-    };
+    // Extract client ID (always configured when enabled)
+    let client_id = extract_from_source_with_token(req.headers(), jwt_token, &config.client_id)
+        .ok_or(ClientIdentificationError::MissingIdentification)?;
 
     // Extract group if configured
     let group = config
         .group_id
         .as_ref()
-        .and_then(|source| extract_from_source(req, source));
+        .and_then(|source| extract_from_source_with_token(req.headers(), jwt_token, source));
 
     // Validate group against allowed list
     validate_group(&group, config)?;
-
-    // If nothing was extracted but identification is enabled, return None
-    // (this handles the case where identification is enabled but nothing is configured)
-    let Some(client_id) = client_id else {
-        return match group {
-            Some(g) => Ok(Some(ClientIdentity {
-                client_id: "unknown".to_string(),
-                group: Some(g),
-            })),
-            None => Ok(None),
-        };
-    };
 
     Ok(Some(ClientIdentity { client_id, group }))
 }
@@ -107,64 +90,55 @@ fn validate_group(
         return Ok(());
     }
 
-    // If group_id is configured but no group was extracted, that's an error
-    if config.group_id.is_some() && group.is_none() {
-        return Err(ClientIdentificationError::MissingIdentification);
-    }
-
-    // If we have a group, it must be in the allowed list
-    if let Some(g) = group
-        && !config.allowed_groups.contains(g)
-    {
-        return Err(ClientIdentificationError::UnauthorizedGroup {
-            group: g.clone(),
-            allowed_groups: config.allowed_groups.iter().cloned().collect(),
-        });
+    // If no group was provided, that's OK - they'll use default rate limits
+    // Only validate if a group was actually provided
+    if let Some(g) = group {
+        // The provided group must be in the allowed list
+        if !config.allowed_groups.contains(g) {
+            return Err(ClientIdentificationError::UnauthorizedGroup {
+                group: g.clone(),
+                allowed_groups: config.allowed_groups.iter().cloned().collect(),
+            });
+        }
     }
 
     Ok(())
 }
 
 /// Extract a value from either JWT claims or HTTP headers based on the source configuration.
-fn extract_from_source<B>(req: &Request<B>, source: &IdentificationSource) -> Option<String> {
+/// Takes the JWT token as a parameter to avoid repeated lookups.
+fn extract_from_source_with_token(
+    headers: &http::HeaderMap,
+    jwt_token: Option<&Token<CustomClaims>>,
+    source: &IdentificationSource,
+) -> Option<String> {
     match source {
-        IdentificationSource::JwtClaim { jwt_claim } => extract_from_jwt_claims(req, jwt_claim),
-        IdentificationSource::HttpHeader { http_header } => extract_from_http_header(req, http_header),
+        // Extract a value from JWT claims.
+        IdentificationSource::JwtClaim { jwt_claim } => {
+            let token = jwt_token?;
+            let claims = token.claims();
+
+            // Use the get_claim method to extract the value
+            claims.custom.get_claim(jwt_claim)
+        }
+        IdentificationSource::HttpHeader { http_header } => headers
+            .get(http_header)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string()),
     }
-}
-
-/// Extract a value from JWT claims.
-///
-/// This requires the request to have a validated JWT token in its extensions,
-/// which is added by the authentication middleware.
-fn extract_from_jwt_claims<B>(req: &Request<B>, claim_path: &str) -> Option<String> {
-    // Get the validated token from request extensions
-    let token = req.extensions().get::<Token<CustomClaims>>()?;
-    let claims = token.claims();
-
-    // Use the get_claim method to extract the value
-    claims.custom.get_claim(claim_path)
-}
-
-/// Extract a value from HTTP headers.
-fn extract_from_http_header<B>(req: &Request<B>, header_name: &str) -> Option<String> {
-    req.headers()
-        .get(header_name)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config::IdentificationSource;
+    use config::{ClientIdentificationConfig, IdentificationSource};
     use std::collections::BTreeSet;
 
     fn create_config(enabled: bool) -> ClientIdentificationConfig {
         ClientIdentificationConfig {
             enabled,
             allowed_groups: BTreeSet::new(),
-            client_id: None,
+            client_id: IdentificationSource::default(),
             group_id: None,
         }
     }
@@ -178,20 +152,25 @@ mod tests {
     }
 
     #[test]
-    fn no_client_id_configured_returns_none() {
+    fn missing_client_id_returns_error() {
         let config = create_config(true);
         let req = Request::builder().body(()).unwrap();
 
-        // When identification is enabled but no sources are configured, returns None
-        assert_eq!(extract_client_identity(&req, &config), Ok(None));
+        // When identification is enabled but client_id is not provided, returns error
+        assert_eq!(
+            extract_client_identity(&req, &config),
+            Err(ClientIdentificationError::MissingIdentification)
+        );
     }
 
     #[test]
     fn extract_from_http_headers() {
         let mut config = create_config(true);
-        config.client_id = Some(IdentificationSource::HttpHeader {
+
+        config.client_id = IdentificationSource::HttpHeader {
             http_header: "X-Client-Id".to_string(),
-        });
+        };
+
         config.group_id = Some(IdentificationSource::HttpHeader {
             http_header: "X-Group".to_string(),
         });
@@ -203,6 +182,7 @@ mod tests {
             .unwrap();
 
         let identity = extract_client_identity(&req, &config).unwrap().unwrap();
+
         assert_eq!(identity.client_id, "user123");
         assert_eq!(identity.group, Some("pro".to_string()));
     }
@@ -210,12 +190,15 @@ mod tests {
     #[test]
     fn validates_group_against_allowed_list() {
         let mut config = create_config(true);
-        config.client_id = Some(IdentificationSource::HttpHeader {
+
+        config.client_id = IdentificationSource::HttpHeader {
             http_header: "X-Client-Id".to_string(),
-        });
+        };
+
         config.group_id = Some(IdentificationSource::HttpHeader {
             http_header: "X-Group".to_string(),
         });
+
         config.allowed_groups = ["free", "pro"].iter().map(|s| s.to_string()).collect();
 
         // Valid group
@@ -236,6 +219,7 @@ mod tests {
             .unwrap();
 
         let result = extract_client_identity(&req, &config);
+
         assert_eq!(
             result,
             Err(ClientIdentificationError::UnauthorizedGroup {
@@ -248,9 +232,10 @@ mod tests {
     #[test]
     fn missing_header_returns_error() {
         let mut config = create_config(true);
-        config.client_id = Some(IdentificationSource::HttpHeader {
+
+        config.client_id = IdentificationSource::HttpHeader {
             http_header: "X-Client-Id".to_string(),
-        });
+        };
 
         let req = Request::builder().body(()).unwrap();
 

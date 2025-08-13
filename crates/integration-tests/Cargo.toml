@@ -22,6 +22,7 @@ futures-util.workspace = true
 indoc.workspace = true
 insta.workspace = true
 itertools.workspace = true
+jwt-compact = { workspace = true, features = ["clock", "rsa", "ed25519-compact", "p256"] }
 log.workspace = true
 logforth = { workspace = true, features = ["colored"] }
 reqwest = { workspace = true, features = ["json"] }

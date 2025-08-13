@@ -37,6 +37,36 @@ const RATE_LIMIT_SCRIPT: &str = r#"
     return {1, current_count, previous_count}  -- Allowed
 "#;
 
+/// Lua script for atomic multi-token rate limit check and increment.
+/// This script consumes multiple tokens at once in the averaging fixed window algorithm.
+const RATE_LIMIT_TOKENS_SCRIPT: &str = r#"
+    local current_key = KEYS[1]
+    local previous_key = KEYS[2]
+    local tokens = tonumber(ARGV[1])
+    local limit = tonumber(ARGV[2])
+    local current_window = tonumber(ARGV[3])
+    local expire_time = tonumber(ARGV[4])
+    local bucket_percentage = tonumber(ARGV[5])
+    
+    -- Get counts from both windows
+    local current_count = tonumber(redis.call('GET', current_key) or '0')
+    local previous_count = tonumber(redis.call('GET', previous_key) or '0')
+    
+    -- Calculate weighted count
+    local weighted_count = previous_count * (1.0 - bucket_percentage) + current_count
+    
+    -- Check if adding tokens would exceed limit
+    if weighted_count + tokens > limit then
+        return {0, current_count, previous_count}  -- Not allowed
+    end
+    
+    -- Increment current window by token amount
+    current_count = redis.call('INCRBY', current_key, tokens)
+    redis.call('EXPIRE', current_key, expire_time)
+    
+    return {1, current_count, previous_count}  -- Allowed
+"#;
+
 /// Redis-based rate limit storage implementation.
 pub struct RedisStorage {
     /// Redis connection pool.
@@ -136,6 +166,63 @@ impl RateLimitStorage for RedisStorage {
                 retry_after: None,
             })
         } else {
+            // Calculate retry_after based on when the current window ends
+            let now_secs = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let window_end = ((now_secs / window_size) + 1) * window_size;
+            let retry_after = Duration::from_secs(window_end - now_secs);
+
+            Ok(RateLimitResult {
+                allowed: false,
+                retry_after: Some(retry_after),
+            })
+        }
+    }
+
+    async fn check_and_consume_tokens(
+        &self,
+        key: &str,
+        tokens: u32,
+        limit: u32,
+        interval: Duration,
+    ) -> Result<RateLimitResult, StorageError> {
+        let (current_key, previous_key, window_size, bucket_percentage) = self.generate_keys(key, interval);
+
+        // Get connection from pool
+        let mut conn = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        // Use Lua script for atomic multi-token check-and-increment
+        let script = Script::new(RATE_LIMIT_TOKENS_SCRIPT);
+        let expire_time = window_size * 2; // Keep keys for 2 windows
+
+        let result: Vec<i64> = script
+            .key(&current_key)
+            .key(&previous_key)
+            .arg(tokens)
+            .arg(limit)
+            .arg(window_size)
+            .arg(expire_time)
+            .arg(bucket_percentage)
+            .invoke_async(&mut *conn)
+            .await
+            .map_err(|e| StorageError::Query(format!("Token rate limit script failed: {e}")))?;
+
+        let allowed = result[0] == 1;
+
+        if allowed {
+            log::debug!("Successfully consumed {} tokens within rate limit", tokens);
+            Ok(RateLimitResult {
+                allowed: true,
+                retry_after: None,
+            })
+        } else {
+            log::debug!("Token rate limit exceeded - cannot consume {} tokens", tokens);
             // Calculate retry_after based on when the current window ends
             let now_secs = SystemTime::now()
                 .duration_since(UNIX_EPOCH)

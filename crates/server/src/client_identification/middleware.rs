@@ -81,28 +81,29 @@ where
                     next.call(req).await
                 }
                 Err(ClientIdentificationError::UnauthorizedGroup { group, allowed_groups }) => {
-                    // Client is in an unauthorized group
+                    // Client is in an unauthorized group - log details internally but don't leak them
                     log::warn!(
                         "Access denied: client attempted to access with unauthorized group '{}', allowed: {:?}",
                         group,
                         allowed_groups
                     );
 
+                    // Generic error response that doesn't leak group information
                     let response = Response::builder()
                         .status(StatusCode::FORBIDDEN)
                         .header("Content-Type", "application/json")
-                        .body(Body::from(format!(
-                            r#"{{"error":"forbidden","error_description":"Access denied: group '{}' is not authorized"}}"#,
-                            group
-                        )))
+                        .body(Body::from(
+                            r#"{"error":"forbidden","error_description":"Access denied"}"#,
+                        ))
                         .unwrap();
 
                     Ok(response)
                 }
                 Err(ClientIdentificationError::MissingIdentification) => {
-                    // Client identification is required but missing
+                    // Client identification is required but missing - log internally
                     log::debug!("Access denied: client identification required but not provided");
 
+                    // Generic error response that doesn't leak authentication requirements
                     let response = Response::builder()
                         .status(StatusCode::UNAUTHORIZED)
                         .header("Content-Type", "application/json")

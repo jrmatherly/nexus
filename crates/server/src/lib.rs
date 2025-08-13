@@ -85,7 +85,7 @@ pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyho
     // Apply CORS to LLM router before merging
     // Only expose LLM endpoint if enabled AND has configured providers
     if config.llm.enabled() {
-        match llm::router(config.llm.clone()).await {
+        match llm::router(config.llm.clone(), &config.server.rate_limits.storage).await {
             Ok(llm_router) => {
                 protected_router = protected_router.merge(llm_router.layer(cors.clone()));
                 llm_actually_exposed = true;
@@ -98,7 +98,22 @@ pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyho
         log::debug!("LLM is enabled but no providers are configured - LLM endpoint will not be exposed");
     }
 
+    // Apply client identification middleware for access control
+    // IMPORTANT: In Axum, layers applied later in code run FIRST in execution
+    // So this must be applied BEFORE auth layer to run AFTER auth validates JWT
+    match config.server.client_identification {
+        Some(ref ident) if ident.enabled => {
+            log::debug!("Applying client identification middleware for access control");
+            let layer = ClientIdentificationLayer::new(ident.clone());
+            protected_router = protected_router.layer(layer);
+        }
+        _ => {
+            log::warn!("Client identification is disabled");
+        }
+    }
+
     // Apply OAuth authentication to protected routes
+    // This runs BEFORE client identification (due to layer ordering) so JWT is available
     if let Some(ref oauth_config) = config.server.oauth {
         protected_router = protected_router.layer(AuthLayer::new(oauth_config.clone()));
 
@@ -109,16 +124,6 @@ pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyho
             "/.well-known/oauth-protected-resource",
             get(move || well_known::oauth_metadata(oauth_config_clone.clone())),
         );
-    }
-
-    // Apply client identification middleware for access control
-    // This runs AFTER authentication but BEFORE rate limiting to ensure
-    // unauthorized groups are rejected immediately
-    if config.server.client_identification.enabled {
-        log::debug!("Applying client identification middleware for access control");
-        protected_router = protected_router.layer(ClientIdentificationLayer::new(
-            config.server.client_identification.clone(),
-        ));
     }
 
     // Apply rate limiting HTTP middleware only if server-level rate limiting is enabled

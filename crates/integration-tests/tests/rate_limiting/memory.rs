@@ -15,6 +15,13 @@ async fn global_rate_limit_basic() {
         [server.rate_limits.global]
         limit = 3
         interval = "10s"
+
+        [mcp]
+        enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -74,6 +81,10 @@ async fn per_ip_rate_limit_basic() {
         [mcp]
         enabled = true
         path = "/mcp"
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -148,13 +159,13 @@ async fn per_ip_rate_limit_basic() {
         "ip": "192.168.1.1",
         "request": 3,
         "status": 429,
-        "retry_after": "0"
+        "retry_after": null
       },
       {
         "ip": "192.168.1.1",
         "request": 4,
         "status": 429,
-        "retry_after": "0"
+        "retry_after": null
       },
       {
         "ip": "192.168.1.2",
@@ -172,7 +183,7 @@ async fn per_ip_rate_limit_basic() {
         "ip": "192.168.1.2",
         "request": 3,
         "status": 429,
-        "retry_after": "0"
+        "retry_after": null
       }
     ]
     "#);
@@ -402,6 +413,13 @@ async fn rate_limiting_disabled() {
     let config = indoc! {r#"
         [server.rate_limits]
         enabled = false
+
+        [mcp]
+        enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -455,6 +473,13 @@ async fn mixed_rate_limits() {
         [server.rate_limits.per_ip]
         limit = 5
         interval = "10s"
+
+        [mcp]
+        enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -540,6 +565,13 @@ async fn concurrent_memory_rate_limiting() {
         [server.rate_limits.global]
         limit = 10
         interval = "5s"
+
+        [mcp]
+        enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = Arc::new(TestServer::builder().build(config).await);

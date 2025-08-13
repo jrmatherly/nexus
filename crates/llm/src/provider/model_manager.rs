@@ -55,7 +55,7 @@ impl ModelManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config::{ModelConfig, TokenRateLimitsConfig};
+    use config::ModelConfig;
 
     #[test]
     fn empty_config_rejects_all_models() {
@@ -65,7 +65,7 @@ mod tests {
             base_url: None,
             forward_token: false,
             models: BTreeMap::new(),
-            rate_limits: TokenRateLimitsConfig::default(),
+            rate_limits: None,
         };
 
         let manager = ModelManager::new(&config, "test");
@@ -82,7 +82,7 @@ mod tests {
             "gpt-4".to_string(),
             ModelConfig {
                 rename: None,
-                rate_limits: TokenRateLimitsConfig::default(),
+                rate_limits: None,
             },
         );
 
@@ -92,7 +92,7 @@ mod tests {
             base_url: None,
             forward_token: false,
             models,
-            rate_limits: TokenRateLimitsConfig::default(),
+            rate_limits: None,
         };
 
         let manager = ModelManager::new(&config, "test");
@@ -108,7 +108,7 @@ mod tests {
             "claude".to_string(),
             ModelConfig {
                 rename: Some("claude-3-opus-20240229".to_string()),
-                rate_limits: TokenRateLimitsConfig::default(),
+                rate_limits: None,
             },
         );
 
@@ -118,7 +118,7 @@ mod tests {
             base_url: None,
             forward_token: false,
             models,
-            rate_limits: TokenRateLimitsConfig::default(),
+            rate_limits: None,
         };
 
         let manager = ModelManager::new(&config, "anthropic");
@@ -137,14 +137,14 @@ mod tests {
             "gpt-4".to_string(),
             ModelConfig {
                 rename: None,
-                rate_limits: TokenRateLimitsConfig::default(),
+                rate_limits: None,
             },
         );
         models.insert(
             "gpt-3.5-turbo".to_string(),
             ModelConfig {
                 rename: None,
-                rate_limits: TokenRateLimitsConfig::default(),
+                rate_limits: None,
             },
         );
 
@@ -154,7 +154,7 @@ mod tests {
             base_url: None,
             forward_token: false,
             models,
-            rate_limits: TokenRateLimitsConfig::default(),
+            rate_limits: None,
         };
 
         let manager = ModelManager::new(&config, "openai");

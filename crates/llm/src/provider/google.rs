@@ -105,7 +105,7 @@ impl Provider for GoogleProvider {
                 401 => LlmError::AuthenticationFailed(error_text),
                 403 => LlmError::InsufficientQuota(error_text),
                 404 => LlmError::ModelNotFound(error_text),
-                429 => LlmError::RateLimitExceeded(error_text),
+                429 => LlmError::RateLimitExceeded { message: error_text },
                 400 => LlmError::InvalidRequest(error_text),
                 500 => LlmError::InternalError(Some(error_text)),
                 _ => LlmError::ProviderApiError {
@@ -186,7 +186,7 @@ impl Provider for GoogleProvider {
                 401 => LlmError::AuthenticationFailed(error_text),
                 403 => LlmError::InsufficientQuota(error_text),
                 404 => LlmError::ModelNotFound(error_text),
-                429 => LlmError::RateLimitExceeded(error_text),
+                429 => LlmError::RateLimitExceeded { message: error_text },
                 400 => LlmError::InvalidRequest(error_text),
                 500 => LlmError::InternalError(Some(error_text)),
                 _ => LlmError::ProviderApiError {

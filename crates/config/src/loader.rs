@@ -1,13 +1,13 @@
 use std::{path::Path, str::FromStr};
 
 use anyhow::bail;
-use indoc::formatdoc;
+use indoc::indoc;
 use serde::Deserialize;
 use serde_dynamic_string::DynamicString;
 use std::fmt::Write;
 use toml::Value;
 
-use crate::{Config, LlmProviderConfig};
+use crate::{ClientIdentificationConfig, Config, LlmProviderConfig};
 
 pub fn load<P: AsRef<Path>>(path: P) -> anyhow::Result<Config> {
     let path = path.as_ref().to_path_buf();
@@ -35,7 +35,7 @@ pub(crate) fn validate_has_downstreams(config: &Config) -> anyhow::Result<()> {
     let has_llm_providers = config.llm.enabled() && config.llm.has_providers();
 
     if !has_mcp_servers && !has_llm_providers {
-        let message = formatdoc! {r#"
+        bail!(indoc! {r#"
             No downstream servers configured. Nexus requires at least one MCP server or LLM provider to function.
 
             Example configuration:
@@ -49,12 +49,10 @@ pub(crate) fn validate_has_downstreams(config: &Config) -> anyhow::Result<()> {
 
               [llm.providers.openai]
               type = "openai"
-              api_key = "{{{{ env.OPENAI_API_KEY }}}}"
+              api_key = "{{ env.OPENAI_API_KEY }}"
 
             See https://nexusrouter.com/docs for more configuration examples.
-        "#};
-
-        bail!(message);
+        "#});
     }
 
     Ok(())
@@ -107,53 +105,67 @@ fn expand_dynamic_strings<'a>(path: &mut Vec<Result<&'a str, usize>>, value: &'a
 /// Validates the rate limit configuration and returns warnings.
 pub(crate) fn validate_rate_limits(config: &Config) -> anyhow::Result<Vec<String>> {
     let mut warnings = Vec::new();
-    
+
     // Check if any LLM provider has rate limits defined
-    let has_llm_rate_limits = config.llm.providers.values().any(|provider| {
-        !provider.rate_limits.groups.is_empty() 
-            || provider.rate_limits.default.is_some()
-            || provider.models.values().any(|model| 
-                !model.rate_limits.groups.is_empty() || model.rate_limits.default.is_some()
-            )
-    });
-    
-    // If LLM rate limits are defined, client identification MUST be enabled
-    if has_llm_rate_limits && !config.server.client_identification.enabled {
-        anyhow::bail!("LLM rate limits are configured but client identification is not enabled. Enable client identification in [server.client_identification]");
+    let has_llm_rate_limits = check_if_any_llm_rate_limits_exist(config);
+
+    // If we do not have LLM rate limits, skip further validation
+    if !has_llm_rate_limits {
+        return Ok(Vec::new());
     }
 
-    // Skip further validation if client identification is not enabled (and no rate limits)
-    if !config.server.client_identification.enabled {
+    // If we have LLM rate limits, client identification MUST be enabled
+    let Some(client_identification) = config.server.client_identification.as_ref() else {
+        anyhow::bail!(
+            "LLM rate limits are configured but client identification is not enabled. Enable client identification in [server.client_identification]"
+        );
+    };
+
+    // If LLM rate limits are defined, client identification MUST be enabled
+    if !client_identification.enabled {
+        anyhow::bail!(
+            "LLM rate limits are configured but client identification is not enabled. Enable client identification in [server.client_identification]"
+        );
+    }
+
+    // If group_id is configured, allowed_groups MUST be defined
+    if client_identification.group_id.is_some() && client_identification.allowed_groups.is_empty() {
+        anyhow::bail!(
+            "group_id is configured for client identification but allowed_groups is empty. Define allowed_groups in [server.client_identification]"
+        );
+    }
+
+    // Check if any provider has group-based rate limits
+    let has_group_rate_limits = check_if_any_group_rate_limits_exist(config);
+
+    if !has_group_rate_limits {
         return Ok(warnings);
     }
-    
-    // If group_id is configured, allowed_groups MUST be defined
-    if config.server.client_identification.group_id.is_some() 
-        && config.server.client_identification.allowed_groups.is_empty() {
-        anyhow::bail!("group_id is configured for client identification but allowed_groups is empty. Define allowed_groups in [server.client_identification]");
-    }
-    
-    // Check if any provider has group-based rate limits
-    let has_group_rate_limits = config.llm.providers.values().any(|provider| {
-        !provider.rate_limits.groups.is_empty() 
-            || provider.models.values().any(|model| !model.rate_limits.groups.is_empty())
-    });
-    
+
     // If group rate limits are defined, group identification MUST be configured
-    if has_group_rate_limits && config.server.client_identification.group_id.is_none() {
-        anyhow::bail!("Group-based rate limits are configured but group_id is not set in client identification. Configure group_id in [server.client_identification]");
+    if client_identification.group_id.is_none() {
+        anyhow::bail!(indoc! {r#"
+            Group-based rate limits are configured but group_id is not set in client identification.
+            To fix this, add a group_id configuration to your [server.client_identification] section, for example:
+
+            [server.client_identification]
+            enabled = true
+            client_id.http_header = "X-Client-ID"      # or client_id.jwt_claim = "sub"
+            group_id.http_header = "X-Group-ID"        # or group_id.jwt_claim = "groups"
+            allowed_groups = ["basic", "premium", "enterprise"]
+        "#});
     }
 
     // Validate all group names in rate limits exist in allowed_groups
     for (provider_name, provider) in &config.llm.providers {
-        validate_provider_groups(config, provider_name, provider)?;
+        validate_provider_groups(client_identification, provider_name, provider)?;
 
         // Generate warnings for fallback scenarios
-        if config.server.client_identification.allowed_groups.is_empty() {
+        if client_identification.allowed_groups.is_empty() {
             continue;
         }
 
-        for group in &config.server.client_identification.allowed_groups {
+        for group in &client_identification.allowed_groups {
             check_group_fallbacks(group, provider_name, provider, &mut warnings);
         }
     }
@@ -162,23 +174,35 @@ pub(crate) fn validate_rate_limits(config: &Config) -> anyhow::Result<Vec<String
 }
 
 fn validate_provider_groups(
-    config: &Config,
+    config: &ClientIdentificationConfig,
     provider_name: &str,
     provider: &LlmProviderConfig,
 ) -> anyhow::Result<()> {
     // Check provider-level group rate limits
-    for group_name in provider.rate_limits.groups.keys() {
-        if !config.server.client_identification.allowed_groups.contains(group_name) {
-            anyhow::bail!(
-                "Group '{group_name}' in provider '{provider_name}' rate limits not found in allowed_groups",
-            );
+    if let Some(rate_limits) = &provider.rate_limits
+        && let Some(per_user) = &rate_limits.per_user
+    {
+        for group_name in per_user.groups.keys() {
+            if config.allowed_groups.contains(group_name) {
+                continue;
+            }
+
+            anyhow::bail!("Group '{group_name}' in provider '{provider_name}' rate limits not found in allowed_groups",);
         }
     }
 
     // Check model-level group rate limits
     for (model_name, model) in &provider.models {
-        for group_name in model.rate_limits.groups.keys() {
-            if !config.server.client_identification.allowed_groups.contains(group_name) {
+        let Some(rate_limits) = &model.rate_limits else {
+            continue;
+        };
+
+        if let Some(per_user) = &rate_limits.per_user {
+            for group_name in per_user.groups.keys() {
+                if config.allowed_groups.contains(group_name) {
+                    continue;
+                }
+
                 anyhow::bail!(
                     "Group '{group_name}' in model '{provider_name}/{model_name}' rate limits not found in allowed_groups",
                 );
@@ -189,35 +213,95 @@ fn validate_provider_groups(
     Ok(())
 }
 
-fn check_group_fallbacks(
-    group: &str,
-    provider_name: &str,
-    provider: &LlmProviderConfig,
-    warnings: &mut Vec<String>,
-) {
+/// Check if any LLM provider or model has rate limits configured.
+fn check_if_any_llm_rate_limits_exist(config: &Config) -> bool {
+    for provider in config.llm.providers.values() {
+        // Check if provider has any rate limits
+        if provider.rate_limits.is_some() {
+            return true;
+        }
+
+        // Check if provider has group-specific rate limits
+        if let Some(limits) = &provider.rate_limits
+            && let Some(per_user) = &limits.per_user
+            && !per_user.groups.is_empty()
+        {
+            return true;
+        }
+
+        // Check if any model has rate limits
+        for model in provider.models.values() {
+            if model.rate_limits.is_some() {
+                return true;
+            }
+
+            // Check if model has group-specific rate limits
+            if let Some(limits) = &model.rate_limits
+                && let Some(per_user) = &limits.per_user
+                && !per_user.groups.is_empty()
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Check if any provider or model has group-based rate limits.
+fn check_if_any_group_rate_limits_exist(config: &Config) -> bool {
+    for provider in config.llm.providers.values() {
+        // Check provider-level group rate limits
+        if let Some(limits) = &provider.rate_limits
+            && let Some(per_user) = &limits.per_user
+            && !per_user.groups.is_empty()
+        {
+            return true;
+        }
+
+        // Check model-level group rate limits
+        for model in provider.models.values() {
+            if let Some(limits) = &model.rate_limits
+                && let Some(per_user) = &limits.per_user
+                && !per_user.groups.is_empty()
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn check_group_fallbacks(group: &str, provider_name: &str, provider: &LlmProviderConfig, warnings: &mut Vec<String>) {
     // Check each model's fallback situation
     for (model_name, model) in &provider.models {
-        let has_model_group = model.rate_limits.groups.contains_key(group);
+        // Check if this model has a specific rate limit for this group
+        let has_model_group = model_has_group_limit(model, group);
+
         if has_model_group {
             continue;
         }
 
-        let has_model_default = model.rate_limits.default.is_some();
-        let has_provider_group = provider.rate_limits.groups.contains_key(group);
-        let has_provider_default = provider.rate_limits.default.is_some();
+        // Model doesn't have a group-specific limit, check fallbacks
+        let has_model_default = model.rate_limits.is_some();
+        let has_provider_group = provider_has_group_limit(provider, group);
+        let has_provider_default = provider.rate_limits.is_some();
 
         let warning = match (has_model_default, has_provider_group, has_provider_default) {
-            (true, _, _) => format!(
-                "Group '{group}' for model '{provider_name}/{model_name}' will use model default rate limit",
-            ),
-            (false, true, _) => format!(
-                "Group '{group}' for model '{provider_name}/{model_name}' will use provider group rate limit",
-            ),
-            (false, false, true) => format!(
-                "Group '{group}' for model '{provider_name}/{model_name}' will fall back to provider default rate limit",
-            ),
+            (true, _, _) => {
+                format!("Group '{group}' for model '{provider_name}/{model_name}' will use model default rate limit")
+            }
+            (false, true, _) => {
+                format!("Group '{group}' for model '{provider_name}/{model_name}' will use provider group rate limit")
+            }
+            (false, false, true) => {
+                format!(
+                    "Group '{group}' for model '{provider_name}/{model_name}' will fall back to provider default rate limit"
+                )
+            }
             (false, false, false) => {
-                format!("Group '{group}' for model '{provider_name}/{model_name}' has no rate limit configured",)
+                format!("Group '{group}' for model '{provider_name}/{model_name}' has no rate limit configured")
             }
         };
 
@@ -225,15 +309,39 @@ fn check_group_fallbacks(
     }
 
     // Check if group has no specific limits at all for this provider
-    let has_provider_limit = provider.rate_limits.groups.contains_key(group);
-    let has_any_model_limit = provider
-        .models
-        .values()
-        .any(|m| m.rate_limits.groups.contains_key(group));
+    let has_provider_limit = provider_has_group_limit(provider, group);
+    let has_any_model_limit = provider_has_any_model_with_group_limit(provider, group);
 
-    if !has_provider_limit && !has_any_model_limit && provider.rate_limits.default.is_none() {
-        let warning = format!("Group '{group}' has no rate limits configured for provider '{provider_name}'",);
-
+    if !has_provider_limit && !has_any_model_limit && provider.rate_limits.is_none() {
+        let warning = format!("Group '{group}' has no rate limits configured for provider '{provider_name}'");
         warnings.push(warning);
     }
+}
+
+/// Check if a model has a rate limit for a specific group.
+fn model_has_group_limit(model: &crate::ModelConfig, group: &str) -> bool {
+    model
+        .rate_limits
+        .as_ref()
+        .and_then(|limits| limits.per_user.as_ref())
+        .map(|per_user| per_user.groups.contains_key(group))
+        .unwrap_or(false)
+}
+
+/// Check if a provider has a rate limit for a specific group.
+fn provider_has_group_limit(provider: &LlmProviderConfig, group: &str) -> bool {
+    provider
+        .rate_limits
+        .as_ref()
+        .and_then(|limits| limits.per_user.as_ref())
+        .map(|per_user| per_user.groups.contains_key(group))
+        .unwrap_or(false)
+}
+
+/// Check if any model in a provider has a rate limit for a specific group.
+fn provider_has_any_model_with_group_limit(provider: &LlmProviderConfig, group: &str) -> bool {
+    provider
+        .models
+        .values()
+        .any(|model| model_has_group_limit(model, group))
 }

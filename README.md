@@ -299,6 +299,155 @@ client_key_path = "/path/to/client.key"
 
 **Note**: When configuring tool-specific rate limits, Nexus will warn if you reference tools that don't exist.
 
+#### LLM Token Rate Limiting
+
+Nexus provides token-based rate limiting for LLM providers to help control costs and prevent abuse. Unlike request-based rate limits, token rate limits count an estimate of actual tokens consumed.
+
+##### Prerequisites
+
+**IMPORTANT**: LLM rate limiting requires client identification to be enabled:
+
+```toml
+[server.client_identification]
+enabled = true
+
+# Choose identification methods (at least one required)
+client_id.jwt_claim = "sub"                    # Extract ID from JWT 'sub' claim
+# or
+client_id.http_header = "X-Client-ID"          # Extract ID from HTTP header
+
+# Optional: Limit groups per user (at most one allowed)
+group_id.jwt_claim = "groups"                  # JWT claim containing user's group
+# or
+group_id.http_header = "X-Group-ID"            # Extract ID from HTTP header
+
+# You must provide a list of allowed groups
+allowed_groups = ["free", "pro", "max"]
+```
+
+Without client identification, rate limits cannot be enforced and requests will fail with a configuration error.
+
+##### Configuration Hierarchy
+
+Token rate limits can be configured at four levels, from most to least specific:
+
+1. **Model per user + group**: Specific model for specific each user in a group
+2. **Model per user**: Specific model for each user
+3. **Provider per user + group**: All models from provider for each user in a group
+4. **Provider per user**: All models from provider for each user
+
+The most specific applicable limit is always used.
+
+##### Basic Configuration
+
+```toml
+# Provider-level default rate limit (applies to all models)
+[llm.providers.openai.rate_limits.per_user]
+limit = 100000        # 100K tokens
+interval = "1m"       # Per minute
+output_buffer = 2000  # Reserve 2K tokens for response
+
+# Model-specific rate limit (overrides provider default)
+[llm.providers.openai.models.gpt-4.rate_limits.per_user]
+limit = 50000         # More restrictive for expensive model
+interval = "30s"
+output_buffer = 1000  # Reserve 1K tokens for response
+```
+
+##### Group-Based Rate Limits
+
+Configure different limits for user groups (requires `group_id` and `allowed_groups` in client identification):
+
+```toml
+# Provider-level group limits
+[llm.providers.openai.rate_limits.per_user.groups]
+free = { limit = 10000, interval = "60s", output_buffer = 500 }
+pro = { limit = 100000, interval = "60s", output_buffer = 2000 }
+enterprise = { limit = 1000000, interval = "60s", output_buffer = 5000 }
+
+# Model-specific group limits (override provider groups)
+[llm.providers.openai.models.gpt-4.rate_limits.per_user.groups]
+free = { limit = 5000, interval = "60s", output_buffer = 500 }
+pro = { limit = 50000, interval = "60s", output_buffer = 1000 }
+enterprise = { limit = 500000, interval = "60s", output_buffer = 2000 }
+```
+
+The limits are per user, but you can define different limits if the user is part of a specific group. If the user does not belong to any group, they will be assigned to the per-user limits.
+
+##### Complete Example
+
+```toml
+# Client identification (REQUIRED for rate limiting)
+[server.client_identification]
+enabled = true
+client_id.jwt_claim = "sub"
+group_id.jwt_claim = "subscription_tier"
+allowed_groups = ["free", "pro", "enterprise"]
+
+# OpenAI provider with comprehensive rate limiting
+[llm.providers.openai]
+type = "openai"
+api_key = "{{ env.OPENAI_API_KEY }}"
+
+# Provider-level defaults
+[llm.providers.openai.rate_limits.per_user]
+limit = 100000
+interval = "60s"
+output_buffer = 2000
+
+[llm.providers.openai.rate_limits.per_user.groups]
+free = { limit = 10000, interval = "60s", output_buffer = 500 }
+pro = { limit = 100000, interval = "60s", output_buffer = 2000 }
+
+# GPT-4 specific limits (more restrictive)
+[llm.providers.openai.models.gpt-4]
+[llm.providers.openai.models.gpt-4.rate_limits.per_user]
+limit = 50000
+interval = "60s"
+
+[llm.providers.openai.models.gpt-4.rate_limits.per_user.groups]
+free = { limit = 5000, interval = "60s" }
+pro = { limit = 50000, interval = "60s" }
+
+# GPT-3.5 uses provider defaults
+[llm.providers.openai.models.gpt-3-5-turbo]
+```
+
+##### How Token Counting Works
+
+1. **Input Tokens**: Counted from the request's messages and system prompts
+2. **Output Allowance**: Reserved tokens based on `max_tokens` parameter or configured `output_buffer`
+3. **Pre-check**: Total (input + allowance) is checked against rate limits before processing
+4. **Token Accumulation**: Uses a sliding window algorithm to track usage over time
+
+Note: The system reserves the full output allowance upfront. Actual token usage is not reconciled after completion.
+
+##### Rate Limit Response
+
+When rate limited, the server returns a 429 status code. No Retry-After headers are sent to maintain consistency with downstream LLM provider behavior.
+
+##### Error Responses
+
+When rate limits are exceeded:
+
+```json
+{
+  "error": {
+    "message": "Rate limit exceeded: Token rate limit exceeded. Please try again later.",
+    "type": "rate_limit_error",
+    "code": 429
+  }
+}
+```
+
+##### Important Notes
+
+- **Per-User Limits**: All limits are per individual user/client ID
+- **No Shared Pools**: Currently, there are no shared/global token pools
+- **Streaming Support**: Token counting works with both regular and streaming responses
+- **Provider Agnostic**: Works consistently across all LLM providers
+- **Validation**: Configuration is validated at startup; invalid group names will cause errors
+
 #### TLS Configuration
 
 Configure TLS for downstream connections:

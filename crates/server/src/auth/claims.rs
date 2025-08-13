@@ -12,11 +12,11 @@ pub struct CustomClaims {
     /// Audience claim - identifies the recipients that the JWT is intended for
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aud: Option<Value>,
-    
+
     /// Subject claim - identifies the principal that is the subject of the JWT
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sub: Option<String>,
-    
+
     /// Additional claims for flexible access to custom fields
     #[serde(flatten)]
     pub additional: HashMap<String, Value>,
@@ -41,7 +41,7 @@ impl CustomClaims {
     pub fn has_audience(&self, expected_audience: &str) -> bool {
         self.get_audiences().iter().any(|aud| aud == expected_audience)
     }
-    
+
     /// Extract a claim value by path, supporting nested claims.
     ///
     /// Paths can be simple (e.g., "sub") or nested (e.g., "user.plan").
@@ -53,15 +53,15 @@ impl CustomClaims {
             "aud" => return self.get_audiences().first().cloned(),
             _ => {}
         }
-        
+
         // Handle nested paths in additional claims
         let parts: Vec<&str> = path.split('.').collect();
         let mut current = self.additional.get(parts[0])?;
-        
+
         for part in &parts[1..] {
             current = current.as_object()?.get(*part)?;
         }
-        
+
         // Convert the final value to string
         match current {
             Value::String(s) => Some(s.clone()),

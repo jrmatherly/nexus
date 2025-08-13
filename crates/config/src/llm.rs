@@ -16,7 +16,7 @@ pub struct ModelConfig {
     pub rename: Option<String>,
     /// Rate limits for this model.
     #[serde(default)]
-    pub rate_limits: TokenRateLimitsConfig,
+    pub rate_limits: Option<TokenRateLimitsConfig>,
 }
 
 /// LLM configuration for AI model integration.
@@ -97,10 +97,10 @@ pub struct LlmProviderConfig {
     /// Phase 3: At least one model must be configured.
     #[serde(deserialize_with = "deserialize_non_empty_models_with_default")]
     pub models: BTreeMap<String, ModelConfig>,
-    
+
     /// Provider-level rate limits.
     #[serde(default)]
-    pub rate_limits: TokenRateLimitsConfig,
+    pub rate_limits: Option<TokenRateLimitsConfig>,
 }
 
 /// Custom deserializer that ensures at least one model is configured.
@@ -176,23 +176,14 @@ mod tests {
                     models: {
                         "gpt-3-5-turbo": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                         "gpt-4": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                     },
-                    rate_limits: TokenRateLimitsConfig {
-                        default: None,
-                        groups: {},
-                    },
+                    rate_limits: None,
                 },
             },
         }
@@ -231,23 +222,14 @@ mod tests {
                     models: {
                         "claude-3-opus": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                         "claude-3-sonnet": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                     },
-                    rate_limits: TokenRateLimitsConfig {
-                        default: None,
-                        groups: {},
-                    },
+                    rate_limits: None,
                 },
             },
         }
@@ -283,23 +265,14 @@ mod tests {
                     models: {
                         "gemini-pro": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                         "gemini-pro-vision": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                     },
-                    rate_limits: TokenRateLimitsConfig {
-                        default: None,
-                        groups: {},
-                    },
+                    rate_limits: None,
                 },
             },
         }
@@ -348,16 +321,10 @@ mod tests {
                     models: {
                         "claude-3-opus": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                     },
-                    rate_limits: TokenRateLimitsConfig {
-                        default: None,
-                        groups: {},
-                    },
+                    rate_limits: None,
                 },
                 "google": LlmProviderConfig {
                     provider_type: Google,
@@ -369,16 +336,10 @@ mod tests {
                     models: {
                         "gemini-pro": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                     },
-                    rate_limits: TokenRateLimitsConfig {
-                        default: None,
-                        groups: {},
-                    },
+                    rate_limits: None,
                 },
                 "openai": LlmProviderConfig {
                     provider_type: Openai,
@@ -390,16 +351,10 @@ mod tests {
                     models: {
                         "gpt-4": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                     },
-                    rate_limits: TokenRateLimitsConfig {
-                        default: None,
-                        groups: {},
-                    },
+                    rate_limits: None,
                 },
             },
         }
@@ -482,16 +437,10 @@ mod tests {
                     models: {
                         "gpt-4": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                     },
-                    rate_limits: TokenRateLimitsConfig {
-                        default: None,
-                        groups: {},
-                    },
+                    rate_limits: None,
                 },
             },
         }
@@ -531,25 +480,16 @@ mod tests {
                             rename: Some(
                                 "gpt-3.5-turbo",
                             ),
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                         "gpt-4": ModelConfig {
                             rename: Some(
                                 "gpt-4-turbo-preview",
                             ),
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                     },
-                    rate_limits: TokenRateLimitsConfig {
-                        default: None,
-                        groups: {},
-                    },
+                    rate_limits: None,
                 },
             },
         }
@@ -587,23 +527,14 @@ mod tests {
                     models: {
                         "custom-model": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                         "gpt-4": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                     },
-                    rate_limits: TokenRateLimitsConfig {
-                        default: None,
-                        groups: {},
-                    },
+                    rate_limits: None,
                 },
             },
         }
@@ -650,23 +581,14 @@ mod tests {
                             rename: Some(
                                 "claude-3-opus-20240229",
                             ),
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                         "claude-instant": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                     },
-                    rate_limits: TokenRateLimitsConfig {
-                        default: None,
-                        groups: {},
-                    },
+                    rate_limits: None,
                 },
                 "openai": LlmProviderConfig {
                     provider_type: Openai,
@@ -680,16 +602,10 @@ mod tests {
                             rename: Some(
                                 "gpt-4-turbo",
                             ),
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                     },
-                    rate_limits: TokenRateLimitsConfig {
-                        default: None,
-                        groups: {},
-                    },
+                    rate_limits: None,
                 },
             },
         }
@@ -703,10 +619,12 @@ mod tests {
             type = "openai"
             api_key = "test-key"
             
-            [providers.openai.rate_limits]
-            default = { limit = 100000, interval = "60s", output_buffer = 2000 }
+            [providers.openai.rate_limits.per_user]
+            limit = 100000
+            interval = "60s"
+            output_buffer = 2000
             
-            [providers.openai.rate_limits.groups]
+            [providers.openai.rate_limits.per_user.groups]
             free = { limit = 10000, interval = "60s", output_buffer = 500 }
             pro = { limit = 100000, interval = "60s", output_buffer = 2000 }
             
@@ -716,33 +634,35 @@ mod tests {
         let config: LlmConfig = toml::from_str(config).unwrap();
 
         assert_debug_snapshot!(&config.providers["openai"].rate_limits, @r#"
-        TokenRateLimitsConfig {
-            default: Some(
-                TokenRateLimit {
-                    limit: 100000,
-                    interval: 60s,
-                    output_buffer: Some(
-                        2000,
-                    ),
-                },
-            ),
-            groups: {
-                "free": TokenRateLimit {
-                    limit: 10000,
-                    interval: 60s,
-                    output_buffer: Some(
-                        500,
-                    ),
-                },
-                "pro": TokenRateLimit {
-                    limit: 100000,
-                    interval: 60s,
-                    output_buffer: Some(
-                        2000,
-                    ),
-                },
+        Some(
+            TokenRateLimitsConfig {
+                per_user: Some(
+                    PerUserRateLimits {
+                        limit: 100000,
+                        interval: 60s,
+                        output_buffer: Some(
+                            2000,
+                        ),
+                        groups: {
+                            "free": TokenRateLimit {
+                                limit: 10000,
+                                interval: 60s,
+                                output_buffer: Some(
+                                    500,
+                                ),
+                            },
+                            "pro": TokenRateLimit {
+                                limit: 100000,
+                                interval: 60s,
+                                output_buffer: Some(
+                                    2000,
+                                ),
+                            },
+                        },
+                    },
+                ),
             },
-        }
+        )
         "#);
     }
 
@@ -753,10 +673,12 @@ mod tests {
             type = "openai"
             api_key = "test-key"
             
-            [providers.openai.models.gpt-4.rate_limits]
-            default = { limit = 50000, interval = "60s", output_buffer = 1000 }
+            [providers.openai.models.gpt-4.rate_limits.per_user]
+            limit = 50000
+            interval = "60s"
+            output_buffer = 1000
             
-            [providers.openai.models.gpt-4.rate_limits.groups]
+            [providers.openai.models.gpt-4.rate_limits.per_user.groups]
             free = { limit = 5000, interval = "60s", output_buffer = 500 }
             pro = { limit = 50000, interval = "60s", output_buffer = 1000 }
         "#};
@@ -764,33 +686,35 @@ mod tests {
         let config: LlmConfig = toml::from_str(config).unwrap();
 
         assert_debug_snapshot!(&config.providers["openai"].models["gpt-4"].rate_limits, @r#"
-        TokenRateLimitsConfig {
-            default: Some(
-                TokenRateLimit {
-                    limit: 50000,
-                    interval: 60s,
-                    output_buffer: Some(
-                        1000,
-                    ),
-                },
-            ),
-            groups: {
-                "free": TokenRateLimit {
-                    limit: 5000,
-                    interval: 60s,
-                    output_buffer: Some(
-                        500,
-                    ),
-                },
-                "pro": TokenRateLimit {
-                    limit: 50000,
-                    interval: 60s,
-                    output_buffer: Some(
-                        1000,
-                    ),
-                },
+        Some(
+            TokenRateLimitsConfig {
+                per_user: Some(
+                    PerUserRateLimits {
+                        limit: 50000,
+                        interval: 60s,
+                        output_buffer: Some(
+                            1000,
+                        ),
+                        groups: {
+                            "free": TokenRateLimit {
+                                limit: 5000,
+                                interval: 60s,
+                                output_buffer: Some(
+                                    500,
+                                ),
+                            },
+                            "pro": TokenRateLimit {
+                                limit: 50000,
+                                interval: 60s,
+                                output_buffer: Some(
+                                    1000,
+                                ),
+                            },
+                        },
+                    },
+                ),
             },
-        }
+        )
         "#);
     }
 
@@ -834,16 +758,10 @@ mod tests {
                     models: {
                         "claude-3-opus": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                     },
-                    rate_limits: TokenRateLimitsConfig {
-                        default: None,
-                        groups: {},
-                    },
+                    rate_limits: None,
                 },
                 "google": LlmProviderConfig {
                     provider_type: Google,
@@ -855,16 +773,10 @@ mod tests {
                     models: {
                         "gemini-pro": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                     },
-                    rate_limits: TokenRateLimitsConfig {
-                        default: None,
-                        groups: {},
-                    },
+                    rate_limits: None,
                 },
                 "openai": LlmProviderConfig {
                     provider_type: Openai,
@@ -876,16 +788,10 @@ mod tests {
                     models: {
                         "gpt-4": ModelConfig {
                             rename: None,
-                            rate_limits: TokenRateLimitsConfig {
-                                default: None,
-                                groups: {},
-                            },
+                            rate_limits: None,
                         },
                     },
-                    rate_limits: TokenRateLimitsConfig {
-                        default: None,
-                        groups: {},
-                    },
+                    rate_limits: None,
                 },
             },
         }
