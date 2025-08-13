@@ -2,7 +2,34 @@
 
 use duration_str::{deserialize_duration, deserialize_option_duration};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::time::Duration;
+
+/// Token-based rate limit configuration for LLM requests.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenRateLimit {
+    /// Maximum number of tokens allowed within the interval window.
+    pub limit: u64,
+    /// Time window for the rate limit.
+    #[serde(deserialize_with = "deserialize_duration")]
+    pub interval: Duration,
+    /// Buffer for output token estimation.
+    /// Used when max_tokens is not specified in the request.
+    #[serde(default)]
+    pub output_buffer: Option<u64>,
+}
+
+/// Token rate limits configuration with group-specific overrides.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct TokenRateLimitsConfig {
+    /// Default rate limit for all clients/groups.
+    pub default: Option<TokenRateLimit>,
+    /// Group-specific rate limits.
+    #[serde(default)]
+    pub groups: BTreeMap<String, TokenRateLimit>,
+}
 
 /// Rate limiting configuration for the server.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

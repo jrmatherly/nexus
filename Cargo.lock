@@ -964,6 +964,7 @@ dependencies = [
  "http",
  "indoc",
  "insta",
+ "log",
  "secrecy",
  "serde",
  "serde-dynamic-string",

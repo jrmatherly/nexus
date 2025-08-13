@@ -14,16 +14,14 @@ use http::{HeaderValue, Request, Response, StatusCode, header::RETRY_AFTER};
 use rate_limit::{RateLimitError, RateLimitManager, RateLimitRequest};
 use tower::Layer;
 
-#[derive(Clone)]
-pub struct RateLimitLayer(Arc<RateLimitLayerInner>);
+use crate::client_identification::ClientIdentity;
 
-struct RateLimitLayerInner {
-    manager: Arc<RateLimitManager>,
-}
+#[derive(Clone)]
+pub struct RateLimitLayer(Arc<RateLimitManager>);
 
 impl RateLimitLayer {
     pub fn new(manager: Arc<RateLimitManager>) -> Self {
-        Self(Arc::new(RateLimitLayerInner { manager }))
+        Self(manager)
     }
 }
 
@@ -36,7 +34,7 @@ where
     fn layer(&self, next: Service) -> Self::Service {
         RateLimitService {
             next,
-            layer: self.0.clone(),
+            manager: self.0.clone(),
         }
     }
 }
@@ -44,7 +42,7 @@ where
 #[derive(Clone)]
 pub struct RateLimitService<Service> {
     next: Service,
-    layer: Arc<RateLimitLayerInner>,
+    manager: Arc<RateLimitManager>,
 }
 
 impl<Service, ReqBody> tower::Service<Request<ReqBody>> for RateLimitService<Service>
@@ -64,25 +62,38 @@ where
 
     fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
         let mut next = self.next.clone();
-        let layer = self.layer.clone();
+        let manager = self.manager.clone();
 
         Box::pin(async move {
             // Extract client IP for IP-based rate limiting
             let ip = extract_client_ip(&req);
 
-            // Build rate limit request with only IP (global limits are always checked)
+            // Get client identity from request extensions (already validated by ClientIdentificationLayer)
+            let identity = req.extensions().get::<ClientIdentity>().cloned();
+
+            // Build rate limit request with IP and client identity
             let mut builder = RateLimitRequest::builder();
 
             if let Some(ip) = ip {
                 builder = builder.ip(ip);
             }
 
+            // Log client identity if present
+            if let Some(ref identity) = identity {
+                log::debug!(
+                    "Rate limiting for client: {} in group: {:?}",
+                    identity.client_id,
+                    identity.group
+                );
+            }
+
             let rate_limit_request = builder.build();
 
             // Check rate limits
-            let err = match layer.manager.check_request(&rate_limit_request).await {
+            let err = match manager.check_request(&rate_limit_request).await {
                 Ok(()) => {
                     // Request allowed, continue
+                    // Note: client identity is already in request extensions from ClientIdentificationLayer
                     return next.call(req).await;
                 }
                 Err(err) => err,

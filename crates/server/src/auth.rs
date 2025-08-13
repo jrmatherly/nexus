@@ -1,4 +1,4 @@
-mod claims;
+pub(crate) mod claims;
 mod error;
 mod jwks;
 mod jwt;
@@ -106,9 +106,10 @@ where
 
         Box::pin(async move {
             match layer.jwt.authenticate(&parts).await {
-                Ok(token) => {
-                    // Inject token into request extensions
-                    parts.extensions.insert(token);
+                Ok((token_string, validated_token)) => {
+                    // Inject both the token string and validated token into request extensions
+                    parts.extensions.insert(token_string);
+                    parts.extensions.insert(validated_token);
                     next.call(Request::from_parts(parts, body)).await
                 }
                 Err(auth_error) => {

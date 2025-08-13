@@ -5,6 +5,7 @@
 #![deny(missing_docs)]
 
 mod auth;
+mod client_identification;
 mod cors;
 mod csrf;
 mod health;
@@ -18,6 +19,7 @@ use anyhow::anyhow;
 use auth::AuthLayer;
 use axum::{Router, routing::get};
 use axum_server::tls_rustls::RustlsConfig;
+use client_identification::ClientIdentificationLayer;
 use config::Config;
 use rate_limit::RateLimitLayer;
 use std::sync::Arc;
@@ -107,6 +109,16 @@ pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyho
             "/.well-known/oauth-protected-resource",
             get(move || well_known::oauth_metadata(oauth_config_clone.clone())),
         );
+    }
+
+    // Apply client identification middleware for access control
+    // This runs AFTER authentication but BEFORE rate limiting to ensure
+    // unauthorized groups are rejected immediately
+    if config.server.client_identification.enabled {
+        log::debug!("Applying client identification middleware for access control");
+        protected_router = protected_router.layer(ClientIdentificationLayer::new(
+            config.server.client_identification.clone(),
+        ));
     }
 
     // Apply rate limiting HTTP middleware only if server-level rate limiting is enabled

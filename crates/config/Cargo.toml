@@ -13,6 +13,7 @@ ascii = { workspace = true, features = ["serde"] }
 duration-str.workspace = true
 http.workspace = true
 indoc.workspace = true
+log.workspace = true
 secrecy = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde-dynamic-string.workspace = true
