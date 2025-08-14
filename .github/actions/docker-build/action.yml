@@ -73,7 +73,7 @@ runs:
         echo "tags=$TAGS" >> $GITHUB_OUTPUT
 
     - name: Build and push
-      uses: depot/build-push-action@2583627a84956d07561420dcc1d0eb1f2af3fac0 # v1
+      uses: depot/build-push-action@9785b135c3c76c33db102e45be96a25ab55cd507 # v1
       with:
         project: ${{ inputs.depot_project }}
         token: ${{ inputs.depot_token }}
