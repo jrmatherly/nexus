@@ -65,6 +65,7 @@ mod tests {
             base_url: None,
             forward_token: false,
             models: BTreeMap::new(),
+            rate_limits: None,
         };
 
         let manager = ModelManager::new(&config, "test");
@@ -77,7 +78,13 @@ mod tests {
     #[test]
     fn configured_model_without_rename() {
         let mut models = BTreeMap::new();
-        models.insert("gpt-4".to_string(), ModelConfig { rename: None });
+        models.insert(
+            "gpt-4".to_string(),
+            ModelConfig {
+                rename: None,
+                rate_limits: None,
+            },
+        );
 
         let config = LlmProviderConfig {
             provider_type: config::ProviderType::Openai,
@@ -85,6 +92,7 @@ mod tests {
             base_url: None,
             forward_token: false,
             models,
+            rate_limits: None,
         };
 
         let manager = ModelManager::new(&config, "test");
@@ -100,6 +108,7 @@ mod tests {
             "claude".to_string(),
             ModelConfig {
                 rename: Some("claude-3-opus-20240229".to_string()),
+                rate_limits: None,
             },
         );
 
@@ -109,6 +118,7 @@ mod tests {
             base_url: None,
             forward_token: false,
             models,
+            rate_limits: None,
         };
 
         let manager = ModelManager::new(&config, "anthropic");
@@ -123,8 +133,20 @@ mod tests {
     #[test]
     fn get_configured_models_returns_list() {
         let mut models = BTreeMap::new();
-        models.insert("gpt-4".to_string(), ModelConfig { rename: None });
-        models.insert("gpt-3.5-turbo".to_string(), ModelConfig { rename: None });
+        models.insert(
+            "gpt-4".to_string(),
+            ModelConfig {
+                rename: None,
+                rate_limits: None,
+            },
+        );
+        models.insert(
+            "gpt-3.5-turbo".to_string(),
+            ModelConfig {
+                rename: None,
+                rate_limits: None,
+            },
+        );
 
         let config = LlmProviderConfig {
             provider_type: config::ProviderType::Openai,
@@ -132,6 +154,7 @@ mod tests {
             base_url: None,
             forward_token: false,
             models,
+            rate_limits: None,
         };
 
         let manager = ModelManager::new(&config, "openai");

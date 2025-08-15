@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use config::{LlmConfig, ProviderType};
+use config::{LlmConfig, ProviderType, StorageConfig};
 use futures::stream::StreamExt;
 use itertools::Itertools;
+use rate_limit::{TokenRateLimitManager, TokenRateLimitRequest};
 
 use crate::{
     error::LlmError,
@@ -20,14 +21,16 @@ pub(crate) struct LlmServer {
 
 struct LlmServerInner {
     providers: Vec<Box<dyn Provider>>,
+    config: LlmConfig,
+    token_rate_limiter: Option<TokenRateLimitManager>,
 }
 
 impl LlmServer {
-    pub async fn new(config: LlmConfig) -> crate::Result<Self> {
+    pub async fn new(config: LlmConfig, storage_config: &StorageConfig) -> crate::Result<Self> {
         log::debug!("Initializing LLM server with {} providers", config.providers.len());
         let mut providers = Vec::with_capacity(config.providers.len());
 
-        for (name, provider_config) in config.providers.into_iter() {
+        for (name, provider_config) in config.providers.clone().into_iter() {
             log::debug!("Initializing provider: {name}");
 
             match provider_config.provider_type {
@@ -55,9 +58,121 @@ impl LlmServer {
             log::debug!("LLM server initialized with {} active provider(s)", providers.len());
         }
 
+        // Initialize token rate limiter if any provider has rate limits configured
+        let has_token_rate_limits = config
+            .providers
+            .values()
+            .any(|p| p.rate_limits.is_some() || p.models.values().any(|m| m.rate_limits.is_some()));
+
+        let token_rate_limiter = if has_token_rate_limits {
+            Some(TokenRateLimitManager::new(storage_config).await.map_err(|e| {
+                log::error!("Failed to initialize token rate limiter: {e}");
+                LlmError::InternalError(None)
+            })?)
+        } else {
+            None
+        };
+
         Ok(Self {
-            shared: Arc::new(LlmServerInner { providers }),
+            shared: Arc::new(LlmServerInner {
+                providers,
+                config: config.clone(),
+                token_rate_limiter,
+            }),
         })
+    }
+
+    /// Check token rate limits for a request.
+    ///
+    /// Returns `Some(Duration)` indicating how long to wait if rate limited, or `None` if allowed.
+    ///
+    /// # Token Counting Algorithm
+    ///
+    /// Rate limiting is based solely on input tokens:
+    /// - Input tokens: Counted from request messages using tiktoken
+    /// - Output tokens are NOT considered in rate limiting calculations
+    ///
+    /// # Rate Limiting Behavior
+    ///
+    /// Token rate limiting is only enforced when:
+    /// - Client identification is enabled and a client_id is present
+    /// - The provider or model has rate limits configured
+    /// - The token rate limiter is initialized
+    ///
+    /// When these conditions aren't met, the request is allowed (returns `None`).
+    /// This is safe because the middleware layer enforces client identification
+    /// when it's required by the configuration. And configuration enforces
+    /// client identification when rate limiting is enabled.
+    pub async fn check_rate_limit(
+        &self,
+        context: &RequestContext,
+        request: &ChatCompletionRequest,
+    ) -> Option<std::time::Duration> {
+        // If no client identity, can't apply token rate limits
+        // This is safe because middleware enforces client identification when required
+        let Some(client_id) = context.client_id.as_ref() else {
+            log::debug!(
+                "No client identity available for rate limiting - allowing request. \
+                Token rate limits require client identification to be enabled."
+            );
+            return None;
+        };
+
+        log::debug!(
+            "Checking token rate limit for client_id={client_id}, group={:?}, model={}",
+            context.group,
+            request.model
+        );
+
+        // Extract provider and model from the request
+        let (provider_name, model_name) = request.model.split_once('/')?;
+        log::debug!("Parsed model: provider={}, model={}", provider_name, model_name);
+
+        // Get provider config
+        let provider_config = self.shared.config.providers.get(provider_name)?;
+
+        // Get model config if it exists
+        let model_config = provider_config.models.get(model_name);
+
+        // Check rate limit if token rate limiter is configured
+        let Some(ref token_rate_limiter) = self.shared.token_rate_limiter else {
+            log::debug!(
+                "Token rate limiter not initialized - no providers have token rate limits configured. \
+                Allowing request without token rate limiting."
+            );
+            return None;
+        };
+
+        // Gather provider and model rate limit configurations
+        let (provider_limits, model_limits) = (
+            provider_config.rate_limits.as_ref(),
+            model_config.and_then(|m| m.rate_limits.as_ref()),
+        );
+
+        // Count request tokens (input only, no output buffering)
+        let input_tokens = crate::token_counter::count_input_tokens(request);
+
+        log::debug!("Token accounting: input={input_tokens} (output tokens not counted for rate limiting)",);
+
+        // Create token rate limit request
+        let token_request = TokenRateLimitRequest {
+            client_id: client_id.to_string(),
+            group: context.group.clone(),
+            provider: provider_name.to_string(),
+            model: Some(model_name.to_string()),
+            input_tokens,
+        };
+
+        match token_rate_limiter
+            .check_request(&token_request, provider_limits, model_limits)
+            .await
+        {
+            Ok(duration) => duration,
+            Err(e) => {
+                log::error!("Error checking token rate limit: {e}");
+                None
+            }
+        }
     }
 
     /// Process a chat completion request.

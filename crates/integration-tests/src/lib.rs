@@ -52,8 +52,11 @@ fn init_logger() {
         if std::env::var("TEST_LOG").is_ok() {
             logforth::builder()
                 .dispatch(|d| {
-                    d.filter(EnvFilter::from_str("warn,server=debug,mcp=debug,config=debug").unwrap())
-                        .append(logforth::append::Stderr::default())
+                    d.filter(
+                        EnvFilter::from_str("warn,server=debug,mcp=debug,config=debug,llm=debug,rate_limit=debug")
+                            .unwrap(),
+                    )
+                    .append(logforth::append::Stderr::default())
                 })
                 .apply();
         }
@@ -433,8 +436,13 @@ impl TestServer {
 
     /// Start a new test server with the given TOML configuration
     async fn start(config_toml: &str, cancellation_tokens: Vec<CancellationToken>) -> Self {
-        // Parse the configuration from TOML
-        let config: Config = toml::from_str(config_toml).unwrap();
+        // Write config to a temporary file and use the proper loader to ensure validation
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(&config_path, config_toml).unwrap();
+
+        // Use the proper config loader which includes validation
+        let config = Config::load(&config_path).unwrap();
 
         // Find an available port
         let mut listener = TcpListener::bind("127.0.0.1:0").await;

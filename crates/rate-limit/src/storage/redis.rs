@@ -5,37 +5,16 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use redis::Script;
 
 use super::redis_pool::{Pool, create_pool};
-use super::{RateLimitResult, RateLimitStorage, StorageError};
+use super::{RateLimitContext, RateLimitResult, RateLimitStorage, StorageError, TokenRateLimitContext};
 use config::RedisConfig;
 
 /// Lua script for atomic rate limit check and increment.
 /// This script implements the averaging fixed window algorithm atomically.
-const RATE_LIMIT_SCRIPT: &str = r#"
-    local current_key = KEYS[1]
-    local previous_key = KEYS[2]
-    local limit = tonumber(ARGV[1])
-    local current_window = tonumber(ARGV[2])
-    local expire_time = tonumber(ARGV[3])
-    local bucket_percentage = tonumber(ARGV[4])
-    
-    -- Get counts from both windows
-    local current_count = tonumber(redis.call('GET', current_key) or '0')
-    local previous_count = tonumber(redis.call('GET', previous_key) or '0')
-    
-    -- Calculate weighted count
-    local weighted_count = previous_count * (1.0 - bucket_percentage) + current_count
-    
-    -- Check if limit would be exceeded
-    if weighted_count >= limit then
-        return {0, current_count, previous_count}  -- Not allowed
-    end
-    
-    -- Increment current window
-    current_count = redis.call('INCR', current_key)
-    redis.call('EXPIRE', current_key, expire_time)
-    
-    return {1, current_count, previous_count}  -- Allowed
-"#;
+const RATE_LIMIT_SCRIPT: &str = include_str!("redis/rate_limit.lua");
+
+/// Lua script for atomic multi-token rate limit check and increment.
+/// This script consumes multiple tokens at once in the averaging fixed window algorithm.
+const RATE_LIMIT_TOKENS_SCRIPT: &str = include_str!("redis/rate_limit_tokens.lua");
 
 /// Redis-based rate limit storage implementation.
 pub struct RedisStorage {
@@ -46,6 +25,8 @@ pub struct RedisStorage {
     /// Response timeout for Redis commands.
     #[allow(dead_code)] // Will be used for timeouts later
     response_timeout: Duration,
+    rate_limit_script: Script,
+    rate_limit_tokens_script: Script,
 }
 
 impl RedisStorage {
@@ -66,6 +47,10 @@ impl RedisStorage {
             .await
             .map_err(|e| StorageError::Connection(format!("Failed to ping Redis server: {e}")))?;
 
+        // Use Lua script for atomic check-and-increment
+        let rate_limit_script = Script::new(RATE_LIMIT_SCRIPT);
+        let rate_limit_tokens_script = Script::new(RATE_LIMIT_TOKENS_SCRIPT);
+
         Ok(Self {
             pool,
             key_prefix: config
@@ -73,6 +58,8 @@ impl RedisStorage {
                 .clone()
                 .unwrap_or_else(|| "nexus:rate_limit:".to_string()),
             response_timeout: config.response_timeout.unwrap_or_else(|| Duration::from_secs(1)),
+            rate_limit_script,
+            rate_limit_tokens_script,
         })
     }
 
@@ -100,11 +87,19 @@ impl RedisStorage {
 impl RateLimitStorage for RedisStorage {
     async fn check_and_consume(
         &self,
-        key: &str,
+        context: &RateLimitContext<'_>,
         limit: u32,
         interval: Duration,
     ) -> Result<RateLimitResult, StorageError> {
-        let (current_key, previous_key, window_size, bucket_percentage) = self.generate_keys(key, interval);
+        // Create the storage key for tracking rate limits
+        let key = match context {
+            RateLimitContext::Global => "global".to_string(),
+            RateLimitContext::PerIp { ip } => format!("ip:{ip}"),
+            RateLimitContext::PerServer { server } => format!("server:{server}"),
+            RateLimitContext::PerTool { server, tool } => format!("server:{server}:tool:{tool}"),
+        };
+
+        let (current_key, previous_key, window_size, bucket_percentage) = self.generate_keys(&key, interval);
 
         // Get connection from pool
         let mut conn = self
@@ -113,11 +108,10 @@ impl RateLimitStorage for RedisStorage {
             .await
             .map_err(|e| StorageError::Connection(e.to_string()))?;
 
-        // Use Lua script for atomic check-and-increment
-        let script = Script::new(RATE_LIMIT_SCRIPT);
         let expire_time = window_size * 2; // Keep keys for 2 windows
 
-        let result: Vec<i64> = script
+        let result: Vec<i64> = self
+            .rate_limit_script
             .key(&current_key)
             .key(&previous_key)
             .arg(limit)
@@ -141,6 +135,74 @@ impl RateLimitStorage for RedisStorage {
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
+
+            let window_end = ((now_secs / window_size) + 1) * window_size;
+            let retry_after = Duration::from_secs(window_end - now_secs);
+
+            Ok(RateLimitResult {
+                allowed: false,
+                retry_after: Some(retry_after),
+            })
+        }
+    }
+
+    async fn check_and_consume_tokens(
+        &self,
+        context: &TokenRateLimitContext<'_>,
+        tokens: u32,
+        limit: u32,
+        interval: Duration,
+    ) -> Result<RateLimitResult, StorageError> {
+        // Create the storage key for tracking individual client rate limits
+        let key = format!(
+            "token:{}:{}:{}:{}",
+            context.client_id,
+            context.group.unwrap_or("default"),
+            context.provider,
+            context.model.unwrap_or("default")
+        );
+
+        let (current_key, previous_key, window_size, bucket_percentage) = self.generate_keys(&key, interval);
+
+        // Get connection from pool
+        let mut conn = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| StorageError::Connection(e.to_string()))?;
+
+        let expire_time = window_size * 2; // Keep keys for 2 windows
+
+        let result: Vec<i64> = self
+            .rate_limit_tokens_script
+            .key(&current_key)
+            .key(&previous_key)
+            .arg(tokens)
+            .arg(limit)
+            .arg(window_size)
+            .arg(expire_time)
+            .arg(bucket_percentage)
+            .invoke_async(&mut *conn)
+            .await
+            .map_err(|e| StorageError::Query(format!("Token rate limit script failed: {e}")))?;
+
+        let allowed = result[0] == 1;
+
+        if allowed {
+            log::debug!("Successfully consumed {} tokens within rate limit", tokens);
+            Ok(RateLimitResult {
+                allowed: true,
+                retry_after: None,
+            })
+        } else {
+            log::debug!("Token rate limit exceeded - cannot consume {} tokens", tokens);
+
+            // Calculate retry_after based on when the current window ends
+            let now_secs = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
             let window_end = ((now_secs / window_size) + 1) * window_size;
             let retry_after = Duration::from_secs(window_end - now_secs);
 

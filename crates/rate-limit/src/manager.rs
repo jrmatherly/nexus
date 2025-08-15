@@ -6,7 +6,7 @@ use config::{McpConfig, RateLimitConfig, StorageConfig};
 
 use crate::error::RateLimitError;
 use crate::request::RateLimitRequest;
-use crate::storage::{InMemoryStorage, RateLimitResult, RateLimitStorage, StorageError};
+use crate::storage::{InMemoryStorage, RateLimitContext, RateLimitResult, RateLimitStorage, StorageError};
 
 /// Storage backend for rate limiting.
 enum Storage {
@@ -17,13 +17,13 @@ enum Storage {
 impl Storage {
     async fn check_and_consume(
         &self,
-        key: &str,
+        context: &RateLimitContext<'_>,
         limit: u32,
         interval: std::time::Duration,
     ) -> Result<RateLimitResult, StorageError> {
         match self {
-            Storage::Memory(storage) => storage.check_and_consume(key, limit, interval).await,
-            Storage::Redis(storage) => storage.check_and_consume(key, limit, interval).await,
+            Storage::Memory(storage) => storage.check_and_consume(context, limit, interval).await,
+            Storage::Redis(storage) => storage.check_and_consume(context, limit, interval).await,
         }
     }
 }
@@ -81,10 +81,11 @@ impl RateLimitManager {
             return Ok(());
         };
 
+        let context = RateLimitContext::Global;
         let result = self
             .inner
             .storage
-            .check_and_consume("global", quota.limit, quota.interval)
+            .check_and_consume(&context, quota.limit, quota.interval)
             .await?;
 
         if !result.allowed {
@@ -105,12 +106,11 @@ impl RateLimitManager {
             return Ok(());
         };
 
-        let key = format!("ip:{ip}");
-
+        let context = RateLimitContext::PerIp { ip };
         let result = self
             .inner
             .storage
-            .check_and_consume(&key, quota.limit, quota.interval)
+            .check_and_consume(&context, quota.limit, quota.interval)
             .await?;
 
         if !result.allowed {
@@ -144,8 +144,8 @@ impl RateLimitManager {
             rate_limit.interval
         );
 
-        // Determine which limit to use
-        let (limit, interval, key) = match &request.tool_name {
+        // Determine which limit to use and create context
+        let (limit, interval, context) = match &request.tool_name {
             Some(tool_name) => {
                 let quota = rate_limit
                     .tools
@@ -153,14 +153,25 @@ impl RateLimitManager {
                     .map(|q| (q.limit, q.interval))
                     .unwrap_or((rate_limit.limit, rate_limit.interval));
 
-                (quota.0, quota.1, format!("server:{server_name}:tool:{tool_name}"))
+                (
+                    quota.0,
+                    quota.1,
+                    RateLimitContext::PerTool {
+                        server: server_name,
+                        tool: tool_name,
+                    },
+                )
             }
-            None => (rate_limit.limit, rate_limit.interval, format!("server:{server_name}")),
+            None => (
+                rate_limit.limit,
+                rate_limit.interval,
+                RateLimitContext::PerServer { server: server_name },
+            ),
         };
 
-        log::debug!("Evaluating rate limit: key='{key}', quota={limit} requests per {interval:?}");
+        log::debug!("Evaluating rate limit: context={context:?}, quota={limit} requests per {interval:?}");
 
-        let result = self.inner.storage.check_and_consume(&key, limit, interval).await?;
+        let result = self.inner.storage.check_and_consume(&context, limit, interval).await?;
 
         log::debug!(
             "Rate limit decision: {} (retry after: {:?})",

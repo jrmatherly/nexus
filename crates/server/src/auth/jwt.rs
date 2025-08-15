@@ -28,7 +28,7 @@ impl JwtAuth {
         self.config.protected_resource.resource_documentation()
     }
 
-    pub async fn authenticate(&self, parts: &Parts) -> AuthResult<SecretString> {
+    pub async fn authenticate(&self, parts: &Parts) -> AuthResult<(SecretString, jwt_compact::Token<CustomClaims>)> {
         let token_header = parts
             .headers
             .get(AUTHORIZATION)
@@ -51,12 +51,16 @@ impl JwtAuth {
             }
 
             // Continue with token validation
-            let token = UntrustedToken::new(token_str).map_err(|_| AuthError::InvalidToken("invalid token"))?;
+            let untrusted_token =
+                UntrustedToken::new(token_str).map_err(|_| AuthError::InvalidToken("invalid token"))?;
+
             let jwks = self.jwks_cache.get().await?;
 
-            self.validate_token(&jwks, token).ok_or(AuthError::Unauthorized)?;
+            let validated_token = self
+                .validate_token(&jwks, untrusted_token)
+                .ok_or(AuthError::Unauthorized)?;
 
-            Ok(SecretString::from(token_str.to_string()))
+            Ok((SecretString::from(token_str.to_string()), validated_token))
         } else if token_str.eq_ignore_ascii_case("bearer") {
             // Handle case where header is exactly "Bearer" with no space/token
             Err(AuthError::InvalidToken("missing token"))

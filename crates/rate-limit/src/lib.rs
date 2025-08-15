@@ -14,8 +14,10 @@ mod error;
 mod manager;
 mod request;
 mod storage;
+mod token;
 
 pub use error::RateLimitError;
 pub use manager::RateLimitManager;
 pub use request::{RateLimitRequest, RateLimitRequestBuilder};
 pub use storage::{InMemoryStorage, RateLimitStorage, StorageError};
+pub use token::{TokenRateLimitManager, TokenRateLimitRequest, resolve_token_rate_limit};

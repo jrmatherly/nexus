@@ -2,7 +2,7 @@ use std::{convert::Infallible, sync::Arc};
 
 use axum::{
     Router,
-    extract::{Json, State},
+    extract::{Extension, Json, State},
     http::HeaderMap,
     response::{IntoResponse, Sse, sse::Event},
     routing::{get, post},
@@ -16,6 +16,7 @@ mod messages;
 mod provider;
 mod request;
 mod server;
+pub mod token_counter;
 
 use error::LlmError;
 use server::LlmServer;
@@ -23,9 +24,9 @@ use server::LlmServer;
 pub(crate) type Result<T> = std::result::Result<T, LlmError>;
 
 /// Creates an axum router for LLM endpoints.
-pub async fn router(config: LlmConfig) -> anyhow::Result<Router> {
+pub async fn router(config: LlmConfig, storage_config: &config::StorageConfig) -> anyhow::Result<Router> {
     let server = Arc::new(
-        LlmServer::new(config.clone())
+        LlmServer::new(config.clone(), storage_config)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to initialize LLM server: {e}"))?,
     );
@@ -46,13 +47,50 @@ pub async fn router(config: LlmConfig) -> anyhow::Result<Router> {
 async fn chat_completions(
     State(server): State<Arc<LlmServer>>,
     headers: HeaderMap,
+    client_identity: Option<Extension<config::ClientIdentity>>,
     Json(request): Json<ChatCompletionRequest>,
 ) -> Result<impl IntoResponse> {
-    log::debug!("Received chat completion request for model: {}", request.model);
+    log::info!("LLM chat completions handler called for model: {}", request.model);
     log::debug!("Request has {} messages", request.messages.len());
     log::debug!("Streaming: {}", request.stream.unwrap_or(false));
 
-    let context = request::extract_context(&headers);
+    // Extract request context including client identity
+    let context = request::extract_context(&headers, client_identity.as_ref().map(|ext| &ext.0));
+
+    if let Some(ref client_id) = context.client_id {
+        log::debug!(
+            "Client identity extracted: client_id={}, group={:?}",
+            client_id,
+            context.group
+        );
+    } else {
+        log::debug!("No client identity found in request extensions");
+    }
+
+    // Check token rate limits
+    if let Some(wait_duration) = server.check_rate_limit(&context, &request).await {
+        // Duration::MAX is used as a sentinel value to indicate the request can never succeed
+        // (requires more tokens than the rate limit allows)
+        if wait_duration == std::time::Duration::MAX {
+            log::debug!("Request requires more tokens than rate limit allows - cannot be fulfilled");
+
+            return Err(LlmError::RateLimitExceeded {
+                message: "Token rate limit exceeded. Request requires more tokens than the configured limit allows and cannot be fulfilled.".to_string(),
+            });
+        } else {
+            log::debug!("Request rate limited, need to wait {:?}", wait_duration);
+
+            return Err(LlmError::RateLimitExceeded {
+                message: "Token rate limit exceeded. Please try again later.".to_string(),
+            });
+        }
+    } else {
+        log::debug!(
+            "Token rate limit check passed for client_id={:?}, group={:?}",
+            context.client_id,
+            context.group
+        );
+    }
 
     // Check if streaming is requested
     if request.stream.unwrap_or(false) {

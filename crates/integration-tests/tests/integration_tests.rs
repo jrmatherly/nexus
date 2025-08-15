@@ -23,6 +23,10 @@ async fn health_endpoint_enabled() {
 
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -44,6 +48,10 @@ async fn health_endpoint_disabled() {
 
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -62,6 +70,10 @@ async fn health_endpoint_custom_path() {
 
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -91,6 +103,10 @@ async fn health_endpoint_with_tls() {
 
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -107,6 +123,10 @@ async fn health_endpoint_enabled_by_default() {
     let config = indoc! {r#"
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -129,6 +149,10 @@ async fn health_endpoint_separate_listener() {
 
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     // For this test, we need to handle the separate health listener
@@ -192,6 +216,10 @@ async fn no_tools_by_default() {
     let config = indoc! {r#"
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;

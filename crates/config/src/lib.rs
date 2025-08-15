@@ -2,6 +2,7 @@
 
 #![deny(missing_docs)]
 
+mod client_identity;
 mod cors;
 mod llm;
 mod loader;
@@ -10,11 +11,13 @@ mod rate_limit;
 
 use std::{
     borrow::Cow,
+    collections::BTreeSet,
     net::SocketAddr,
     path::{Path, PathBuf},
     time::Duration,
 };
 
+pub use client_identity::ClientIdentity;
 pub use cors::*;
 use duration_str::deserialize_option_duration;
 pub use llm::{LlmConfig, LlmProviderConfig, ModelConfig, ProviderType};
@@ -74,6 +77,9 @@ pub struct ServerConfig {
     /// Rate limiting configuration
     #[serde(default)]
     pub rate_limits: RateLimitConfig,
+    /// Client identification configuration for token-based rate limiting
+    #[serde(default)]
+    pub client_identification: Option<ClientIdentificationConfig>,
 }
 
 impl ServerConfig {
@@ -81,6 +87,59 @@ impl ServerConfig {
     pub fn uses_oauth(&self) -> bool {
         self.oauth.is_some()
     }
+}
+
+/// Identification source - either JWT claim or HTTP header.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum IdentificationSource {
+    /// Extract from JWT claim.
+    JwtClaim {
+        /// JWT claim path (e.g., "sub", "plan").
+        jwt_claim: String,
+    },
+    /// Extract from HTTP header.
+    HttpHeader {
+        /// HTTP header name (e.g., "X-Client-Id", "X-Group-Id").
+        http_header: String,
+    },
+}
+
+impl Default for IdentificationSource {
+    fn default() -> Self {
+        Self::JwtClaim {
+            jwt_claim: "sub".to_string(),
+        }
+    }
+}
+
+/// Client identification extraction configuration.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct ClientIdentificationConfig {
+    /// Whether client identification is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Validation settings for client identification.
+    #[serde(default)]
+    pub validation: ClientIdentificationValidation,
+
+    /// Client ID extraction source.
+    pub client_id: IdentificationSource,
+
+    /// Group ID extraction source.
+    #[serde(default)]
+    pub group_id: Option<IdentificationSource>,
+}
+
+/// Validation settings for client identification.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct ClientIdentificationValidation {
+    /// List of valid group values. All group names in rate limits must be from this list.
+    #[serde(default)]
+    pub group_values: BTreeSet<String>,
 }
 
 /// OAuth2 configuration for authentication.
@@ -174,6 +233,7 @@ mod tests {
 
     use ascii::AsciiString;
     use indoc::indoc;
+    use insta::assert_debug_snapshot;
 
     use crate::{
         Config,
@@ -217,6 +277,7 @@ mod tests {
                     global: None,
                     per_ip: None,
                 },
+                client_identification: None,
             },
             mcp: McpConfig {
                 enabled: false,
@@ -263,6 +324,7 @@ mod tests {
                     global: None,
                     per_ip: None,
                 },
+                client_identification: None,
             },
             mcp: McpConfig {
                 enabled: true,
@@ -1774,13 +1836,13 @@ mod tests {
             [llm.providers.openai]
             type = "openai"
             api_key = "${OPENAI_API_KEY}"
-            
+
             [llm.providers.openai.models.gpt-4]
 
             [llm.providers.anthropic]
             type = "anthropic"
             api_key = "{{ env.ANTHROPIC_API_KEY }}"
-            
+
             [llm.providers.anthropic.models.claude-3-opus]
         "#};
 
@@ -1801,8 +1863,10 @@ mod tests {
                     models: {
                         "claude-3-opus": ModelConfig {
                             rename: None,
+                            rate_limits: None,
                         },
                     },
+                    rate_limits: None,
                 },
                 "openai": LlmProviderConfig {
                     provider_type: Openai,
@@ -1814,12 +1878,279 @@ mod tests {
                     models: {
                         "gpt-4": ModelConfig {
                             rename: None,
+                            rate_limits: None,
                         },
                     },
+                    rate_limits: None,
                 },
             },
         }
         "#);
+    }
+
+    #[test]
+    fn client_identification_config() {
+        let config = indoc! {r#"
+            [server.client_identification]
+            enabled = true
+            client_id.jwt_claim = "sub"
+            group_id.jwt_claim = "plan"
+            
+            [server.client_identification.validation]
+            group_values = ["free", "pro", "enterprise"]
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+
+        assert_debug_snapshot!(&config.server.client_identification, @r#"
+        Some(
+            ClientIdentificationConfig {
+                enabled: true,
+                validation: ClientIdentificationValidation {
+                    group_values: {
+                        "enterprise",
+                        "free",
+                        "pro",
+                    },
+                },
+                client_id: JwtClaim {
+                    jwt_claim: "sub",
+                },
+                group_id: Some(
+                    JwtClaim {
+                        jwt_claim: "plan",
+                    },
+                ),
+            },
+        )
+        "#);
+    }
+
+    #[test]
+    fn client_identification_http_headers() {
+        let config = indoc! {r#"
+            [server.client_identification]
+            enabled = true
+            client_id.http_header = "X-Client-Id"
+            group_id.http_header = "X-Plan"
+            
+            [server.client_identification.validation]
+            group_values = ["basic", "premium"]
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+
+        assert_debug_snapshot!(&config.server.client_identification, @r#"
+        Some(
+            ClientIdentificationConfig {
+                enabled: true,
+                validation: ClientIdentificationValidation {
+                    group_values: {
+                        "basic",
+                        "premium",
+                    },
+                },
+                client_id: HttpHeader {
+                    http_header: "X-Client-Id",
+                },
+                group_id: Some(
+                    HttpHeader {
+                        http_header: "X-Plan",
+                    },
+                ),
+            },
+        )
+        "#);
+    }
+
+    #[test]
+    fn rate_limit_validation_with_groups() {
+        let config = indoc! {r#"
+            [server.client_identification]
+            enabled = true
+            client_id.jwt_claim = "sub"
+            group_id.jwt_claim = "plan"
+            
+            [server.client_identification.validation]
+            group_values = ["free", "pro"]
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+
+            [llm.providers.openai.rate_limits.per_user]
+            input_token_limit = 50000
+            interval = "60s"
+
+            [llm.providers.openai.rate_limits.per_user.groups]
+            free = { input_token_limit = 10000, interval = "60s" }
+            pro = { input_token_limit = 100000, interval = "60s" }
+
+            [llm.providers.openai.models.gpt-4]
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+        let warnings = crate::loader::validate_rate_limits(&config).unwrap();
+
+        // Should have warnings about model fallbacks
+        insta::assert_debug_snapshot!(warnings, @r#"
+        [
+            "Group 'free' for model 'openai/gpt-4' will use provider group rate limit",
+            "Group 'pro' for model 'openai/gpt-4' will use provider group rate limit",
+        ]
+        "#);
+    }
+
+    #[test]
+    fn rate_limits_without_client_identification_fails() {
+        let config = indoc! {r#"
+            [server.client_identification]
+            enabled = false
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+
+            [llm.providers.openai.rate_limits.per_user]
+            input_token_limit = 10000
+            interval = "60s"
+
+            [llm.providers.openai.models.gpt-4]
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+        let result = crate::loader::validate_rate_limits(&config);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+
+        insta::assert_snapshot!(error, @"LLM rate limits are configured but client identification is not enabled. Enable client identification in [server.client_identification]");
+    }
+
+    #[test]
+    fn model_rate_limits_without_client_identification_fails() {
+        let config = indoc! {r#"
+            [server.client_identification]
+            enabled = false
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+
+            [llm.providers.openai.models.gpt-4.rate_limits.per_user]
+            input_token_limit = 5000
+            interval = "60s"
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+        let result = crate::loader::validate_rate_limits(&config);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+        insta::assert_snapshot!(error, @"LLM rate limits are configured but client identification is not enabled. Enable client identification in [server.client_identification]");
+    }
+
+    #[test]
+    fn group_id_without_allowed_groups_fails() {
+        let config = indoc! {r#"
+            [server.client_identification]
+            enabled = true
+            client_id.jwt_claim = "sub"
+            group_id.jwt_claim = "plan"
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+
+            [llm.providers.openai.rate_limits.per_user]
+            input_token_limit = 5000
+            interval = "60s"
+
+            [llm.providers.openai.models.gpt-4]
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+        let result = crate::loader::validate_rate_limits(&config);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+
+        insta::assert_snapshot!(error, @"group_id is configured for client identification but validation.group_values is empty. Define group_values in [server.client_identification.validation]");
+    }
+
+    #[test]
+    fn group_rate_limits_without_group_id_fails() {
+        let config = indoc! {r#"
+            [server.client_identification]
+            enabled = true
+            client_id.jwt_claim = "sub"
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+
+            [llm.providers.openai.rate_limits.per_user]
+            input_token_limit = 5000
+            interval = "60s"
+
+            [llm.providers.openai.rate_limits.per_user.groups]
+            free = { input_token_limit = 10000, interval = "60s" }
+
+            [llm.providers.openai.models.gpt-4]
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+        let result = crate::loader::validate_rate_limits(&config);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+
+        insta::assert_snapshot!(error, @r#"
+        Group-based rate limits are configured but group_id is not set in client identification.
+        To fix this, add a group_id configuration to your [server.client_identification] section, for example:
+
+        [server.client_identification]
+        enabled = true
+        client_id.http_header = "X-Client-ID"      # or client_id.jwt_claim = "sub"
+        group_id.http_header = "X-Group-ID"        # or group_id.jwt_claim = "groups"
+
+        [server.client_identification.validation]
+        group_values = ["basic", "premium", "enterprise"]
+        "#);
+    }
+
+    #[test]
+    fn rate_limit_validation_invalid_group() {
+        let config = indoc! {r#"
+            [server.client_identification]
+            enabled = true
+            client_id.jwt_claim = "sub"
+            group_id.jwt_claim = "plan"
+            
+            [server.client_identification.validation]
+            group_values = ["free", "pro"]
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+
+            [llm.providers.openai.rate_limits.per_user]
+            input_token_limit = 50000
+            interval = "60s"
+
+            [llm.providers.openai.rate_limits.per_user.groups]
+            enterprise = { input_token_limit = 1000000, interval = "60s" }
+
+            [llm.providers.openai.models.gpt-4]
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+        let result = crate::loader::validate_rate_limits(&config);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+
+        insta::assert_snapshot!(error, @"Group 'enterprise' in provider 'openai' rate limits not found in group_values");
     }
 
     #[test]
@@ -2096,7 +2427,7 @@ mod tests {
             [llm.providers.openai]
             type = "openai"
             api_key = "test-key"
-            
+
             [llm.providers.openai.models.gpt-4]
         "#};
 
@@ -2114,7 +2445,7 @@ mod tests {
             [llm.providers.openai]
             type = "openai"
             api_key = "test-key"
-            
+
             [llm.providers.openai.models.gpt-4]
         "#};
 
@@ -2132,7 +2463,7 @@ mod tests {
             [llm.providers.openai]
             type = "openai"
             api_key = "test-key"
-            
+
             [llm.providers.openai.models.gpt-4]
         "#};
 

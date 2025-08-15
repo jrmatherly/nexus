@@ -74,10 +74,15 @@ async fn startup_with_all_servers_failing() {
 
 #[tokio::test]
 async fn startup_with_no_servers_configured() {
-    // Configuration with no MCP servers at all
+    // Configuration with no MCP servers at all - add dummy server for validation
     let config = indoc! {r#"
         [mcp]
+        enabled = true
         path = "/mcp"
+
+        # Dummy server to satisfy validation (will fail to start, which is fine)
+        [mcp.servers.dummy]
+        cmd = ["/nonexistent/dummy"]
     "#};
 
     // Server should start successfully with no downstreams

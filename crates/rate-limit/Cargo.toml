@@ -5,9 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-anyhow.workspace = true
 config.workspace = true
-dashmap.workspace = true
 deadpool.workspace = true
 governor.workspace = true
 log.workspace = true

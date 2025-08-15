@@ -158,6 +158,14 @@ Nexus requires at least one downstream service (MCP servers or LLM providers) to
   - Models are configured under `[llm.providers.<name>.models.<model-id>]`
   - Model IDs containing dots must be quoted: `[llm.providers.google.models."gemini-1.5-flash"]`
 
+#### Client Identification for Rate Limiting
+
+When using token-based rate limits with groups:
+- `server.client_identification.enabled` must be `true`
+- `server.client_identification.validation.group_values` must list all groups referenced in rate limit configurations
+- Groups not in `group_values` will be rejected with 400 Bad Request
+- Missing groups default to the provider/model's `per_user` rate limit
+
 For integration tests that need to test endpoints without actual downstream servers, use dummy configurations:
 
 ```toml
@@ -235,6 +243,7 @@ Comprehensive testing setup:
 Rate limiting functionality for the entire system:
 - **Global Rate Limits**: System-wide request limits
 - **Per-IP Rate Limits**: Individual IP address throttling
+- **Token-based Rate Limits**: Per-user and per-group token consumption limits for LLMs
 - **MCP Server/Tool Limits**: Per-server and per-tool rate limits
 - **Storage Backends**: In-memory (governor) and Redis (distributed)
 - **Averaging Fixed Window Algorithm**: For Redis-based rate limiting
@@ -380,6 +389,46 @@ async fn handle_tool_search(query: String) -> Result<Vec<Tool>, anyhow::Error> {
 ```
 
 ## LLM Provider Configuration Patterns
+
+### Token Rate Limiting Configuration
+
+Nexus supports hierarchical token-based rate limiting for LLM providers. The configuration uses a `per_user` namespace to make it explicit that these are individual user limits (not shared pools).
+
+**Important**: Rate limits only count input tokens. The field is named `input_token_limit` to make this explicit. Output tokens and the `max_tokens` parameter are NOT considered in rate limit calculations:
+
+```toml
+# Provider-level default rate limit (applies to all models in this provider)
+[llm.providers.openai.rate_limits.per_user]
+input_token_limit = 1000        # Maximum input tokens per user
+interval = "60s"                # Time window
+
+# Provider-level group-specific rate limits
+[llm.providers.openai.rate_limits.per_user.groups.premium]
+input_token_limit = 5000
+interval = "60s"
+
+[llm.providers.openai.rate_limits.per_user.groups.basic]
+input_token_limit = 500
+interval = "60s"
+
+# Model-level rate limits (override provider-level limits)
+[llm.providers.openai.models."gpt-4".rate_limits.per_user]
+input_token_limit = 2000
+interval = "60s"
+
+# Model-level group-specific rate limits (highest priority)
+[llm.providers.openai.models."gpt-4".rate_limits.per_user.groups.premium]
+input_token_limit = 10000
+interval = "60s"
+```
+
+#### Rate Limit Hierarchy
+
+Rate limits are resolved in the following priority order (highest to lowest):
+1. **Model + Group**: Specific model with specific group
+2. **Model Default**: Specific model without group
+3. **Provider + Group**: Provider-level with specific group
+4. **Provider Default**: Provider-level without group
 
 ### Model Configuration Requirements
 

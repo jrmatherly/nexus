@@ -7,6 +7,10 @@ async fn default_behavior() {
     let config = indoc! {r#"
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -35,6 +39,10 @@ async fn allow_origins_any() {
 
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -62,6 +70,10 @@ async fn allow_origins_explicit() {
 
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -106,6 +118,10 @@ async fn allow_methods_explicit() {
 
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -137,6 +153,10 @@ async fn allow_credentials() {
 
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -164,6 +184,10 @@ async fn max_age() {
 
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -191,6 +215,10 @@ async fn allow_headers() {
 
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -223,6 +251,10 @@ async fn expose_headers() {
 
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -245,6 +277,10 @@ async fn private_network() {
 
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -279,6 +315,10 @@ async fn comprehensive_config() {
 
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;
@@ -327,6 +367,10 @@ async fn actual_cross_origin_request() {
 
         [mcp]
         enabled = true
+
+        # Dummy server to satisfy validation
+        [mcp.servers.dummy]
+        cmd = ["echo", "dummy"]
     "#};
 
     let server = TestServer::builder().build(config).await;

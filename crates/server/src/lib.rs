@@ -5,6 +5,7 @@
 #![deny(missing_docs)]
 
 mod auth;
+mod client_id;
 mod cors;
 mod csrf;
 mod health;
@@ -18,6 +19,7 @@ use anyhow::anyhow;
 use auth::AuthLayer;
 use axum::{Router, routing::get};
 use axum_server::tls_rustls::RustlsConfig;
+use client_id::ClientIdentificationLayer;
 use config::Config;
 use rate_limit::RateLimitLayer;
 use std::sync::Arc;
@@ -83,7 +85,7 @@ pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyho
     // Apply CORS to LLM router before merging
     // Only expose LLM endpoint if enabled AND has configured providers
     if config.llm.enabled() {
-        match llm::router(config.llm.clone()).await {
+        match llm::router(config.llm.clone(), &config.server.rate_limits.storage).await {
             Ok(llm_router) => {
                 protected_router = protected_router.merge(llm_router.layer(cors.clone()));
                 llm_actually_exposed = true;
@@ -96,7 +98,22 @@ pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyho
         log::debug!("LLM is enabled but no providers are configured - LLM endpoint will not be exposed");
     }
 
+    // Apply client identification middleware for access control
+    // IMPORTANT: In Axum, layers applied later in code run FIRST in execution
+    // So this must be applied BEFORE auth layer to run AFTER auth validates JWT
+    match config.server.client_identification {
+        Some(ref ident) if ident.enabled => {
+            log::debug!("Applying client identification middleware for access control");
+            let layer = ClientIdentificationLayer::new(ident.clone());
+            protected_router = protected_router.layer(layer);
+        }
+        _ => {
+            log::warn!("Client identification is disabled");
+        }
+    }
+
     // Apply OAuth authentication to protected routes
+    // This runs BEFORE client identification (due to layer ordering) so JWT is available
     if let Some(ref oauth_config) = config.server.oauth {
         protected_router = protected_router.layer(AuthLayer::new(oauth_config.clone()));
 
