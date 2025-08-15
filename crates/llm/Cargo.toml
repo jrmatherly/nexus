@@ -11,13 +11,11 @@ repository.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
-bytes.workspace = true
 config.workspace = true
 eventsource-stream.workspace = true
 futures.workspace = true
 itertools.workspace = true
 log.workspace = true
-mini-moka.workspace = true
 rate-limit.workspace = true
 reqwest = { workspace = true, features = ["json", "stream"] }
 secrecy.workspace = true
@@ -25,7 +23,6 @@ serde.workspace = true
 sonic-rs.workspace = true
 thiserror.workspace = true
 tiktoken-rs.workspace = true
-tokio = { workspace = true, features = ["sync"] }
 uuid.workspace = true
 
 [dev-dependencies]
