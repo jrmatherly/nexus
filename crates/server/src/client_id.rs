@@ -85,8 +85,8 @@ fn validate_group(
     group: &Option<String>,
     config: &ClientIdentificationConfig,
 ) -> Result<(), ClientIdentificationError> {
-    // No validation needed if no allowed_groups are configured
-    if config.allowed_groups.is_empty() {
+    // No validation needed if no group_values are configured
+    if config.validation.group_values.is_empty() {
         return Ok(());
     }
 
@@ -94,10 +94,10 @@ fn validate_group(
     // Only validate if a group was actually provided
     if let Some(g) = group {
         // The provided group must be in the allowed list
-        if !config.allowed_groups.contains(g) {
+        if !config.validation.group_values.contains(g) {
             return Err(ClientIdentificationError::UnauthorizedGroup {
                 group: g.clone(),
-                allowed_groups: config.allowed_groups.iter().cloned().collect(),
+                allowed_groups: config.validation.group_values.iter().cloned().collect(),
             });
         }
     }
@@ -131,13 +131,15 @@ fn extract_from_source_with_token(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config::{ClientIdentificationConfig, IdentificationSource};
+    use config::{ClientIdentificationConfig, ClientIdentificationValidation, IdentificationSource};
     use std::collections::BTreeSet;
 
     fn create_config(enabled: bool) -> ClientIdentificationConfig {
         ClientIdentificationConfig {
             enabled,
-            allowed_groups: BTreeSet::new(),
+            validation: ClientIdentificationValidation {
+                group_values: BTreeSet::new(),
+            },
             client_id: IdentificationSource::default(),
             group_id: None,
         }
@@ -199,7 +201,7 @@ mod tests {
             http_header: "X-Group".to_string(),
         });
 
-        config.allowed_groups = ["free", "pro"].iter().map(|s| s.to_string()).collect();
+        config.validation.group_values = ["free", "pro"].iter().map(|s| s.to_string()).collect();
 
         // Valid group
         let req = Request::builder()

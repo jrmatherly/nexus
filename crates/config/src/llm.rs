@@ -620,13 +620,12 @@ mod tests {
             api_key = "test-key"
             
             [providers.openai.rate_limits.per_user]
-            limit = 100000
+            input_token_limit = 100000
             interval = "60s"
-            output_buffer = 2000
             
             [providers.openai.rate_limits.per_user.groups]
-            free = { limit = 10000, interval = "60s", output_buffer = 500 }
-            pro = { limit = 100000, interval = "60s", output_buffer = 2000 }
+            free = { input_token_limit = 10000, interval = "60s" }
+            pro = { input_token_limit = 100000, interval = "60s" }
             
             [providers.openai.models.gpt-4]
         "#};
@@ -638,25 +637,16 @@ mod tests {
             TokenRateLimitsConfig {
                 per_user: Some(
                     PerUserRateLimits {
-                        limit: 100000,
+                        input_token_limit: 100000,
                         interval: 60s,
-                        output_buffer: Some(
-                            2000,
-                        ),
                         groups: {
                             "free": TokenRateLimit {
-                                limit: 10000,
+                                input_token_limit: 10000,
                                 interval: 60s,
-                                output_buffer: Some(
-                                    500,
-                                ),
                             },
                             "pro": TokenRateLimit {
-                                limit: 100000,
+                                input_token_limit: 100000,
                                 interval: 60s,
-                                output_buffer: Some(
-                                    2000,
-                                ),
                             },
                         },
                     },
@@ -674,13 +664,12 @@ mod tests {
             api_key = "test-key"
             
             [providers.openai.models.gpt-4.rate_limits.per_user]
-            limit = 50000
+            input_token_limit = 50000
             interval = "60s"
-            output_buffer = 1000
             
             [providers.openai.models.gpt-4.rate_limits.per_user.groups]
-            free = { limit = 5000, interval = "60s", output_buffer = 500 }
-            pro = { limit = 50000, interval = "60s", output_buffer = 1000 }
+            free = { input_token_limit = 5000, interval = "60s" }
+            pro = { input_token_limit = 50000, interval = "60s" }
         "#};
 
         let config: LlmConfig = toml::from_str(config).unwrap();
@@ -690,25 +679,16 @@ mod tests {
             TokenRateLimitsConfig {
                 per_user: Some(
                     PerUserRateLimits {
-                        limit: 50000,
+                        input_token_limit: 50000,
                         interval: 60s,
-                        output_buffer: Some(
-                            1000,
-                        ),
                         groups: {
                             "free": TokenRateLimit {
-                                limit: 5000,
+                                input_token_limit: 5000,
                                 interval: 60s,
-                                output_buffer: Some(
-                                    500,
-                                ),
                             },
                             "pro": TokenRateLimit {
-                                limit: 50000,
+                                input_token_limit: 50000,
                                 interval: 60s,
-                                output_buffer: Some(
-                                    1000,
-                                ),
                             },
                         },
                     },

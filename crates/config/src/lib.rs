@@ -121,9 +121,9 @@ pub struct ClientIdentificationConfig {
     #[serde(default)]
     pub enabled: bool,
 
-    /// List of allowed groups. All group names in rate limits must be from this list.
+    /// Validation settings for client identification.
     #[serde(default)]
-    pub allowed_groups: BTreeSet<String>,
+    pub validation: ClientIdentificationValidation,
 
     /// Client ID extraction source.
     pub client_id: IdentificationSource,
@@ -131,6 +131,15 @@ pub struct ClientIdentificationConfig {
     /// Group ID extraction source.
     #[serde(default)]
     pub group_id: Option<IdentificationSource>,
+}
+
+/// Validation settings for client identification.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct ClientIdentificationValidation {
+    /// List of valid group values. All group names in rate limits must be from this list.
+    #[serde(default)]
+    pub group_values: BTreeSet<String>,
 }
 
 /// OAuth2 configuration for authentication.
@@ -1884,10 +1893,11 @@ mod tests {
         let config = indoc! {r#"
             [server.client_identification]
             enabled = true
-            allowed_groups = ["free", "pro", "enterprise"]
-
             client_id.jwt_claim = "sub"
             group_id.jwt_claim = "plan"
+            
+            [server.client_identification.validation]
+            group_values = ["free", "pro", "enterprise"]
         "#};
 
         let config: Config = toml::from_str(config).unwrap();
@@ -1896,10 +1906,12 @@ mod tests {
         Some(
             ClientIdentificationConfig {
                 enabled: true,
-                allowed_groups: {
-                    "enterprise",
-                    "free",
-                    "pro",
+                validation: ClientIdentificationValidation {
+                    group_values: {
+                        "enterprise",
+                        "free",
+                        "pro",
+                    },
                 },
                 client_id: JwtClaim {
                     jwt_claim: "sub",
@@ -1919,10 +1931,11 @@ mod tests {
         let config = indoc! {r#"
             [server.client_identification]
             enabled = true
-            allowed_groups = ["basic", "premium"]
-
             client_id.http_header = "X-Client-Id"
             group_id.http_header = "X-Plan"
+            
+            [server.client_identification.validation]
+            group_values = ["basic", "premium"]
         "#};
 
         let config: Config = toml::from_str(config).unwrap();
@@ -1931,9 +1944,11 @@ mod tests {
         Some(
             ClientIdentificationConfig {
                 enabled: true,
-                allowed_groups: {
-                    "basic",
-                    "premium",
+                validation: ClientIdentificationValidation {
+                    group_values: {
+                        "basic",
+                        "premium",
+                    },
                 },
                 client_id: HttpHeader {
                     http_header: "X-Client-Id",
@@ -1953,21 +1968,23 @@ mod tests {
         let config = indoc! {r#"
             [server.client_identification]
             enabled = true
-            allowed_groups = ["free", "pro"]
             client_id.jwt_claim = "sub"
             group_id.jwt_claim = "plan"
+            
+            [server.client_identification.validation]
+            group_values = ["free", "pro"]
 
             [llm.providers.openai]
             type = "openai"
             api_key = "test-key"
 
             [llm.providers.openai.rate_limits.per_user]
-            limit = 50000
+            input_token_limit = 50000
             interval = "60s"
 
             [llm.providers.openai.rate_limits.per_user.groups]
-            free = { limit = 10000, interval = "60s" }
-            pro = { limit = 100000, interval = "60s" }
+            free = { input_token_limit = 10000, interval = "60s" }
+            pro = { input_token_limit = 100000, interval = "60s" }
 
             [llm.providers.openai.models.gpt-4]
         "#};
@@ -1995,7 +2012,7 @@ mod tests {
             api_key = "test-key"
 
             [llm.providers.openai.rate_limits.per_user]
-            limit = 10000
+            input_token_limit = 10000
             interval = "60s"
 
             [llm.providers.openai.models.gpt-4]
@@ -2021,7 +2038,7 @@ mod tests {
             api_key = "test-key"
 
             [llm.providers.openai.models.gpt-4.rate_limits.per_user]
-            limit = 5000
+            input_token_limit = 5000
             interval = "60s"
         "#};
 
@@ -2046,7 +2063,7 @@ mod tests {
             api_key = "test-key"
 
             [llm.providers.openai.rate_limits.per_user]
-            limit = 5000
+            input_token_limit = 5000
             interval = "60s"
 
             [llm.providers.openai.models.gpt-4]
@@ -2058,7 +2075,7 @@ mod tests {
         assert!(result.is_err());
         let error = result.unwrap_err().to_string();
 
-        insta::assert_snapshot!(error, @"group_id is configured for client identification but allowed_groups is empty. Define allowed_groups in [server.client_identification]");
+        insta::assert_snapshot!(error, @"group_id is configured for client identification but validation.group_values is empty. Define group_values in [server.client_identification.validation]");
     }
 
     #[test]
@@ -2073,11 +2090,11 @@ mod tests {
             api_key = "test-key"
 
             [llm.providers.openai.rate_limits.per_user]
-            limit = 5000
+            input_token_limit = 5000
             interval = "60s"
 
             [llm.providers.openai.rate_limits.per_user.groups]
-            free = { limit = 10000, interval = "60s" }
+            free = { input_token_limit = 10000, interval = "60s" }
 
             [llm.providers.openai.models.gpt-4]
         "#};
@@ -2096,7 +2113,9 @@ mod tests {
         enabled = true
         client_id.http_header = "X-Client-ID"      # or client_id.jwt_claim = "sub"
         group_id.http_header = "X-Group-ID"        # or group_id.jwt_claim = "groups"
-        allowed_groups = ["basic", "premium", "enterprise"]
+
+        [server.client_identification.validation]
+        group_values = ["basic", "premium", "enterprise"]
         "#);
     }
 
@@ -2105,20 +2124,22 @@ mod tests {
         let config = indoc! {r#"
             [server.client_identification]
             enabled = true
-            allowed_groups = ["free", "pro"]
             client_id.jwt_claim = "sub"
             group_id.jwt_claim = "plan"
+            
+            [server.client_identification.validation]
+            group_values = ["free", "pro"]
 
             [llm.providers.openai]
             type = "openai"
             api_key = "test-key"
 
             [llm.providers.openai.rate_limits.per_user]
-            limit = 50000
+            input_token_limit = 50000
             interval = "60s"
 
             [llm.providers.openai.rate_limits.per_user.groups]
-            enterprise = { limit = 1000000, interval = "60s" }
+            enterprise = { input_token_limit = 1000000, interval = "60s" }
 
             [llm.providers.openai.models.gpt-4]
         "#};
@@ -2129,7 +2150,7 @@ mod tests {
         assert!(result.is_err());
         let error = result.unwrap_err().to_string();
 
-        insta::assert_snapshot!(error, @"Group 'enterprise' in provider 'openai' rate limits not found in allowed_groups");
+        insta::assert_snapshot!(error, @"Group 'enterprise' in provider 'openai' rate limits not found in group_values");
     }
 
     #[test]

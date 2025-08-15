@@ -128,10 +128,10 @@ pub(crate) fn validate_rate_limits(config: &Config) -> anyhow::Result<Vec<String
         );
     }
 
-    // If group_id is configured, allowed_groups MUST be defined
-    if client_identification.group_id.is_some() && client_identification.allowed_groups.is_empty() {
+    // If group_id is configured, group_values MUST be defined
+    if client_identification.group_id.is_some() && client_identification.validation.group_values.is_empty() {
         anyhow::bail!(
-            "group_id is configured for client identification but allowed_groups is empty. Define allowed_groups in [server.client_identification]"
+            "group_id is configured for client identification but validation.group_values is empty. Define group_values in [server.client_identification.validation]"
         );
     }
 
@@ -152,20 +152,22 @@ pub(crate) fn validate_rate_limits(config: &Config) -> anyhow::Result<Vec<String
             enabled = true
             client_id.http_header = "X-Client-ID"      # or client_id.jwt_claim = "sub"
             group_id.http_header = "X-Group-ID"        # or group_id.jwt_claim = "groups"
-            allowed_groups = ["basic", "premium", "enterprise"]
+            
+            [server.client_identification.validation]
+            group_values = ["basic", "premium", "enterprise"]
         "#});
     }
 
-    // Validate all group names in rate limits exist in allowed_groups
+    // Validate all group names in rate limits exist in group_values
     for (provider_name, provider) in &config.llm.providers {
         validate_provider_groups(client_identification, provider_name, provider)?;
 
         // Generate warnings for fallback scenarios
-        if client_identification.allowed_groups.is_empty() {
+        if client_identification.validation.group_values.is_empty() {
             continue;
         }
 
-        for group in &client_identification.allowed_groups {
+        for group in &client_identification.validation.group_values {
             check_group_fallbacks(group, provider_name, provider, &mut warnings);
         }
     }
@@ -183,11 +185,11 @@ fn validate_provider_groups(
         && let Some(per_user) = &rate_limits.per_user
     {
         for group_name in per_user.groups.keys() {
-            if config.allowed_groups.contains(group_name) {
+            if config.validation.group_values.contains(group_name) {
                 continue;
             }
 
-            anyhow::bail!("Group '{group_name}' in provider '{provider_name}' rate limits not found in allowed_groups",);
+            anyhow::bail!("Group '{group_name}' in provider '{provider_name}' rate limits not found in group_values",);
         }
     }
 
@@ -199,12 +201,12 @@ fn validate_provider_groups(
 
         if let Some(per_user) = &rate_limits.per_user {
             for group_name in per_user.groups.keys() {
-                if config.allowed_groups.contains(group_name) {
+                if config.validation.group_values.contains(group_name) {
                     continue;
                 }
 
                 anyhow::bail!(
-                    "Group '{group_name}' in model '{provider_name}/{model_name}' rate limits not found in allowed_groups",
+                    "Group '{group_name}' in model '{provider_name}/{model_name}' rate limits not found in group_values",
                 );
             }
         }

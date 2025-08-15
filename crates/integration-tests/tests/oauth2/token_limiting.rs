@@ -89,7 +89,7 @@ async fn test_rate_limiting_with_different_client_ids() {
         client_id = { jwt_claim = "client_id" }  # Use client_id claim
 
         [llm.providers.openai.rate_limits.per_user]
-        limit = 100
+        input_token_limit = 100
         interval = "60s"
     "#};
 
@@ -107,20 +107,22 @@ async fn test_rate_limiting_with_different_client_ids() {
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Test"}],
-        "max_tokens": 80  // ~88 tokens total
+        "max_tokens": 80  // max_tokens not counted anymore, only ~8 input tokens
     });
 
-    // Premium client uses most of its limit
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .authorization(&premium_token.access_token)
-        .json(&request)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200, "Premium client first request should succeed");
+    // Premium client uses most of its limit (100 tokens / 8 = 12 requests)
+    for i in 1..=12 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .authorization(&premium_token.access_token)
+            .json(&request)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Premium client request {} should succeed", i);
+    }
 
-    // Premium client hits rate limit
+    // Premium client hits rate limit on 13th request
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .authorization(&premium_token.access_token)
@@ -131,20 +133,24 @@ async fn test_rate_limiting_with_different_client_ids() {
     assert_eq!(response.status(), 429, "Premium client should hit rate limit");
 
     // Basic client should still be able to make requests (independent rate limit)
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .authorization(&basic_token.access_token)
-        .json(&request)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        response.status(),
-        200,
-        "Basic client should have independent rate limit"
-    );
+    // Basic client also has 100 token limit (same as premium in this test)
+    for i in 1..=12 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .authorization(&basic_token.access_token)
+            .json(&request)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            200,
+            "Basic client request {} should succeed (independent rate limit)",
+            i
+        );
+    }
 
-    // Basic client also hits its limit
+    // Basic client hits rate limit on 13th request
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .authorization(&basic_token.access_token)
@@ -192,7 +198,7 @@ async fn test_rate_limiting_with_sub_claim() {
         client_id = { jwt_claim = "sub" }  # Use sub claim (equals client_id)
 
         [llm.providers.openai.rate_limits.per_user]
-        limit = 50
+        input_token_limit = 50
         interval = "60s"
     "#};
 
@@ -209,20 +215,22 @@ async fn test_rate_limiting_with_sub_claim() {
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Hi"}],
-        "max_tokens": 40  // ~46 tokens total
+        "max_tokens": 40  // max_tokens not counted anymore, only ~8 input tokens
     });
 
-    // First request should succeed
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .authorization(&alice_token.access_token)
-        .json(&request)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200, "Alice's first request should succeed");
+    // Alice has 50 token limit, each request is ~8 tokens (not 6), so can make 6 requests (6 * 8 = 48 < 50)
+    for i in 1..=6 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .authorization(&alice_token.access_token)
+            .json(&request)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Alice's request {} should succeed", i);
+    }
 
-    // Second request should fail (exceeds 50 token limit)
+    // 7th request should fail (exceeds 50 token limit: 7 * 8 = 56 > 50)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .authorization(&alice_token.access_token)
@@ -292,7 +300,7 @@ async fn two_jwt_users_independent_rate_limits() {
         client_id = { jwt_claim = "sub" }  # Use sub claim (equals client_id)
 
         [llm.providers.openai.rate_limits.per_user]
-        limit = 50  # Low limit for clear demonstration
+        input_token_limit = 50  # Low limit for clear demonstration
         interval = "60s"
     "#};
 
@@ -303,35 +311,30 @@ async fn two_jwt_users_independent_rate_limits() {
     let alice_token = hydra.get_token("user-alice", "user-alice-secret").await.unwrap();
     let bob_token = hydra.get_token("user-bob", "user-bob-secret").await.unwrap();
 
-    // Request that uses most of the 50 token limit
-    let large_request = json!({
+    // Request with ~8 input tokens (max_tokens not counted anymore)
+    let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Hi"}],
-        "max_tokens": 40  // ~46 tokens total
+        "max_tokens": 40  // max_tokens not counted anymore
     });
 
-    // Small request that fits in remaining quota
-    let small_request = json!({
-        "model": "openai/gpt-4",
-        "messages": [{"role": "user", "content": "Hi"}],
-        "max_tokens": 10  // ~16 tokens total
-    });
+    // Alice uses her rate limit (50 tokens / 8 = 6 requests)
+    for i in 1..=6 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .authorization(&alice_token.access_token)
+            .json(&request)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Alice's request {} should succeed", i);
+    }
 
-    // Alice uses her rate limit
+    // Alice hits her rate limit on 7th request (7 * 8 = 56 > 50)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .authorization(&alice_token.access_token)
-        .json(&large_request)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200, "Alice's first request should succeed");
-
-    // Alice hits her rate limit on second request (46 + 46 = 92 > 50)
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .authorization(&alice_token.access_token)
-        .json(&large_request)
+        .json(&request)
         .send()
         .await
         .unwrap();
@@ -352,46 +355,50 @@ async fn two_jwt_users_independent_rate_limits() {
     "#);
 
     // Bob should still be able to make requests (independent rate limit)
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .authorization(&bob_token.access_token)
-        .json(&small_request) // Small request (16 tokens)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        response.status(),
-        200,
-        "Bob should have independent rate limit and succeed"
-    );
+    // Bob also has 50 tokens, can make 6 requests (50 / 8 = 6)
+    for i in 1..=6 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .authorization(&bob_token.access_token)
+            .json(&request)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            200,
+            "Bob's request {} should succeed (independent rate limit)",
+            i
+        );
+    }
 
-    // Bob can make another small request (16 + 16 = 32 < 50)
+    // Bob hits his limit on 7th request (7 * 8 = 56 > 50)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .authorization(&bob_token.access_token)
-        .json(&small_request) // Another small request
+        .json(&request)
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 200, "Bob's second request should also succeed");
+    assert_eq!(response.status(), 429, "Bob should also hit his rate limit");
 
     // But Alice is still rate limited
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .authorization(&alice_token.access_token)
-        .json(&small_request) // Even small request fails for Alice
+        .json(&request) // Even same request fails for Alice
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), 429, "Alice should still be rate limited");
 
-    // Eventually Bob will also hit his limit with a large request (32 + 46 = 78 > 50)
+    // Bob is also now rate limited
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .authorization(&bob_token.access_token)
-        .json(&large_request) // Large request exceeds remaining quota
+        .json(&request) // Bob is also rate limited now
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 429, "Bob should also hit his rate limit eventually");
+    assert_eq!(response.status(), 429, "Bob should also be rate limited");
 }

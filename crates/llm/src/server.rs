@@ -88,12 +88,9 @@ impl LlmServer {
     ///
     /// # Token Counting Algorithm
     ///
-    /// Total tokens = Input tokens + Output allowance where:
+    /// Rate limiting is based solely on input tokens:
     /// - Input tokens: Counted from request messages using tiktoken
-    /// - Output allowance: Determined by (in order of precedence):
-    ///   1. Request's `max_tokens` parameter if specified
-    ///   2. Rate limit's `output_buffer` configuration if available
-    ///   3. 0 if neither is specified
+    /// - Output tokens are NOT considered in rate limiting calculations
     ///
     /// # Rate Limiting Behavior
     ///
@@ -152,27 +149,10 @@ impl LlmServer {
             model_config.and_then(|m| m.rate_limits.as_ref()),
         );
 
-        // Resolve the applicable rate limit using the 4-level hierarchy:
-        // 1. Model + Group, 2. Model default, 3. Provider + Group, 4. Provider default
-        let rate_limit = rate_limit::resolve_token_rate_limit(context.group.as_deref(), provider_limits, model_limits);
+        // Count request tokens (input only, no output buffering)
+        let input_tokens = crate::token_counter::count_input_tokens(request);
 
-        // Count request tokens
-        let request_tokens = crate::token_counter::count_request_tokens(request);
-
-        // Determine output allowance (pre-allocated tokens for response):
-        // Priority: request.max_tokens > rate_limit.output_buffer > 0
-        let output_allowance = if let Some(max) = request.max_tokens {
-            max as usize
-        } else if let Some(limit) = rate_limit {
-            limit.output_buffer.unwrap_or(0) as usize
-        } else {
-            0
-        };
-
-        let total_tokens = request_tokens + output_allowance;
-        log::debug!(
-            "Token accounting: input={request_tokens}, output_allowance={output_allowance}, total={total_tokens}",
-        );
+        log::debug!("Token accounting: input={input_tokens} (output tokens not counted for rate limiting)",);
 
         // Create token rate limit request
         let token_request = TokenRateLimitRequest {
@@ -180,7 +160,7 @@ impl LlmServer {
             group: context.group.clone(),
             provider: provider_name.to_string(),
             model: Some(model_name.to_string()),
-            tokens: total_tokens,
+            input_tokens,
         };
 
         match token_rate_limiter

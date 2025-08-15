@@ -14,7 +14,7 @@ async fn empty_client_id_accepted() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 1000
+        input_token_limit = 1000
         interval = "60s"
 
         [server.client_identification]
@@ -54,7 +54,7 @@ async fn whitespace_client_id_accepted() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 1000
+        input_token_limit = 1000
         interval = "60s"
 
         [server.client_identification]
@@ -94,18 +94,20 @@ async fn very_long_identifiers() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 1000
+        input_token_limit = 1000
         interval = "60s"
 
         [llm.providers.openai.rate_limits.per_user.groups.enterprise]
-        limit = 5000
+        input_token_limit = 5000
         interval = "60s"
 
         [server.client_identification]
         enabled = true
-        allowed_groups = ["enterprise"]
         client_id = { http_header = "X-Client-Id" }
         group_id = { http_header = "X-Group" }
+        
+        [server.client_identification.validation]
+        group_values = ["enterprise"]
     "#};
 
     let server = builder.build(config).await;
@@ -143,7 +145,7 @@ async fn special_characters_in_identifiers() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 1000
+        input_token_limit = 1000
         interval = "60s"
 
         [server.client_identification]
@@ -189,7 +191,7 @@ async fn rate_limit_exceeded_response_format() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 50
+        input_token_limit = 50
         interval = "60s"
 
         [server.client_identification]
@@ -203,9 +205,22 @@ async fn rate_limit_exceeded_response_format() {
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Test"}],
-        "max_tokens": 60  // Exceeds limit of 50
+        "max_tokens": 60
     });
 
+    // Make 6 requests first to use up most of the limit (48 tokens)
+    for i in 1..=6 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "rate-limit-test")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Request {} should succeed", i);
+    }
+
+    // 7th request should exceed the limit (56 tokens > 50)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -223,7 +238,7 @@ async fn rate_limit_exceeded_response_format() {
     insta::assert_json_snapshot!(body, @r#"
     {
       "error": {
-        "message": "Rate limit exceeded: Token rate limit exceeded. Request requires more tokens than the configured limit allows and cannot be fulfilled.",
+        "message": "Rate limit exceeded: Token rate limit exceeded. Please try again later.",
         "type": "rate_limit_error",
         "code": 429
       }
@@ -241,7 +256,7 @@ async fn missing_client_id_error_format() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 1000
+        input_token_limit = 1000
         interval = "60s"
 
         [server.client_identification]
@@ -265,13 +280,13 @@ async fn missing_client_id_error_format() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), 401);
+    assert_eq!(response.status(), 400);
 
     let body = response.json::<serde_json::Value>().await.unwrap();
     insta::assert_json_snapshot!(body, @r#"
     {
-      "error": "unauthorized",
-      "error_description": "Client identification required"
+      "error": "missing_client_id",
+      "error_description": "Client identification is required"
     }
     "#);
 }
@@ -286,14 +301,16 @@ async fn unauthorized_group_error_format() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 1000
+        input_token_limit = 1000
         interval = "60s"
 
         [server.client_identification]
         enabled = true
-        allowed_groups = ["basic", "premium"]
         client_id = { http_header = "X-Client-Id" }
         group_id = { http_header = "X-Group" }
+        
+        [server.client_identification.validation]
+        group_values = ["basic", "premium"]
     "#};
 
     let server = builder.build(config).await;
@@ -308,18 +325,18 @@ async fn unauthorized_group_error_format() {
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
         .header("X-Client-Id", "test-client")
-        .header("X-Group", "enterprise") // Not in allowed_groups
+        .header("X-Group", "enterprise") // Not in group_values
         .send()
         .await
         .unwrap();
 
-    assert_eq!(response.status(), 403);
+    assert_eq!(response.status(), 400);
 
     let body = response.json::<serde_json::Value>().await.unwrap();
     insta::assert_json_snapshot!(body, @r#"
     {
-      "error": "forbidden",
-      "error_description": "Access denied"
+      "error": "invalid_group",
+      "error_description": "The specified group is not valid"
     }
     "#);
 }

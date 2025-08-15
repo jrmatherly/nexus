@@ -14,18 +14,20 @@ async fn undefined_group_falls_back_to_default() {
     // Configuration with only "premium" group defined, but not "basic"
     let config = r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 100
+        input_token_limit = 100
         interval = "60s"
 
         [llm.providers.openai.rate_limits.per_user.groups.premium]
-        limit = 500
+        input_token_limit = 500
         interval = "60s"
 
         [server.client_identification]
         enabled = true
-        allowed_groups = ["premium", "basic"]  # Must define allowed_groups when using group_id
         client_id = { http_header = "X-Client-Id" }
         group_id = { http_header = "X-Group" }
+        
+        [server.client_identification.validation]
+        group_values = ["premium", "basic"]  # Must define group_values when using group_id
     "#;
 
     let server = builder.build(config).await;
@@ -35,22 +37,23 @@ async fn undefined_group_falls_back_to_default() {
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Test"}],
-        "max_tokens": 80  // ~88 tokens total
+        "max_tokens": 80
     });
 
-    // First request with undefined group "basic"
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "test-client")
-        .header("X-Group", "basic") // This group is NOT defined
-        .send()
-        .await
-        .unwrap();
+    // Make 12 requests (96 tokens) with undefined group "basic"
+    for i in 1..=12 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "test-client")
+            .header("X-Group", "basic") // This group is NOT defined
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Request {} should succeed", i);
+    }
 
-    assert_eq!(response.status(), 200, "First request should succeed");
-
-    // Second request - total would be 176 tokens
+    // 13th request - total would be 104 tokens (exceeds default 100 limit)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -88,18 +91,20 @@ async fn defined_group_uses_group_limit_not_default() {
 
     let config = r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 30
+        input_token_limit = 30
         interval = "60s"
 
         [llm.providers.openai.rate_limits.per_user.groups.premium]
-        limit = 200
+        input_token_limit = 200
         interval = "60s"
 
         [server.client_identification]
         enabled = true
-        allowed_groups = ["premium"]  # Must define allowed_groups when using group_id
         client_id = { http_header = "X-Client-Id" }
         group_id = { http_header = "X-Group" }
+        
+        [server.client_identification.validation]
+        group_values = ["premium"]  # Must define group_values when using group_id
     "#;
 
     let server = builder.build(config).await;
@@ -109,11 +114,11 @@ async fn defined_group_uses_group_limit_not_default() {
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Test"}],
-        "max_tokens": 40  // ~48 tokens total
+        "max_tokens": 40
     });
 
-    // Make two requests with premium group (96 tokens total)
-    for i in 1..=2 {
+    // Make 25 requests with premium group (200 tokens total) - should all succeed
+    for i in 1..=25 {
         let response = client
             .request(reqwest::Method::POST, "/llm/v1/chat/completions")
             .json(&request)
@@ -131,7 +136,7 @@ async fn defined_group_uses_group_limit_not_default() {
         );
     }
 
-    // Third request would be 144 tokens total - still under group limit
+    // 26th request would be 208 tokens total - exceeds group limit
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -143,7 +148,7 @@ async fn defined_group_uses_group_limit_not_default() {
 
     assert_eq!(
         response.status(),
-        200,
-        "Third request should succeed - group limit (200) overrides default (30)"
+        429,
+        "26th request should be rate limited at group limit (200)"
     );
 }

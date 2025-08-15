@@ -45,7 +45,7 @@ async fn token_rate_limit_enforced_with_client_id() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 100
+        input_token_limit = 100
         interval = "60s"
 
         [server.client_identification]
@@ -56,38 +56,32 @@ async fn token_rate_limit_enforced_with_client_id() {
     let server = builder.build(config).await;
     let client = &server.client;
 
-    // Each request: ~8 input tokens + 30 max_tokens = 38 tokens
+    // Each request: ~8 input tokens (output tokens not counted anymore)
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Hello"}],
         "max_tokens": 30
     });
 
-    // First request: 38 tokens (should succeed)
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "test-client")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200, "First request (38 tokens) should succeed");
+    // Make requests up to the limit (100 tokens / 8 tokens per request = 12 requests)
+    for i in 1..=12 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "test-client")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            200,
+            "Request {} ({} total tokens) should succeed",
+            i,
+            i * 8
+        );
+    }
 
-    // Second request: 38 + 38 = 76 tokens (should succeed)
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "test-client")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        response.status(),
-        200,
-        "Second request (76 total tokens) should succeed"
-    );
-
-    // Third request: 76 + 38 = 114 tokens (should fail - exceeds 100 limit)
+    // 13th request: 104 tokens (should fail - exceeds 100 limit)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -98,7 +92,7 @@ async fn token_rate_limit_enforced_with_client_id() {
     assert_eq!(
         response.status(),
         429,
-        "Third request (114 total tokens) should be rate limited"
+        "13th request (104 total tokens) should be rate limited"
     );
 
     // Verify error response format
@@ -122,73 +116,64 @@ async fn rate_limit_hierarchy_resolution() {
     let config = indoc! {r#"
         # Level 4: Provider default
         [llm.providers.openai.rate_limits.per_user]
-        limit = 100
+        input_token_limit = 100
         interval = "60s"
 
         # Level 3: Provider + Group
         [llm.providers.openai.rate_limits.per_user.groups.pro]
-        limit = 200
+        input_token_limit = 200
         interval = "60s"
 
         # Level 2: Model default
         [llm.providers.openai.models."gpt-4".rate_limits.per_user]
-        limit = 300
+        input_token_limit = 300
         interval = "60s"
 
         # Level 1: Model + Group (highest priority)
         [llm.providers.openai.models."gpt-4".rate_limits.per_user.groups.pro]
-        limit = 400
+        input_token_limit = 400
         interval = "60s"
 
         [server.client_identification]
         enabled = true
-        allowed_groups = ["pro"]  # Must define allowed_groups when using group_id
         client_id = { http_header = "X-Client-Id" }
         group_id = { http_header = "X-Group" }
+
+        [server.client_identification.validation]
+        group_values = ["pro"]  # Must define allowed_groups when using group_id
     "#};
 
     let server = builder.build(config).await;
     let client = &server.client;
 
     // Test Level 1: Model + Group (gpt-4 + pro group) - limit 400
-    // Each request: ~8 input + 150 max = 158 tokens
+    // Each request: ~8 input tokens (max_tokens not counted)
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Test"}],
         "max_tokens": 150
     });
 
-    // First request: 158 tokens
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "client1")
-        .header("X-Group", "pro")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        response.status(),
-        200,
-        "Level 1: First request (158 tokens) should succeed"
-    );
+    // Make requests up to the limit (400 tokens / 8 tokens per request = 50 requests)
+    for i in 1..=50 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "client1")
+            .header("X-Group", "pro")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            200,
+            "Level 1: Request {} ({} total tokens) should succeed",
+            i,
+            i * 8
+        );
+    }
 
-    // Second request: 158 + 158 = 316 tokens
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "client1")
-        .header("X-Group", "pro")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        response.status(),
-        200,
-        "Level 1: Second request (316 total) should succeed"
-    );
-
-    // Third request: 316 + 158 = 474 tokens (exceeds 400 limit)
+    // 51st request: 408 tokens (exceeds 400 limit)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -200,7 +185,7 @@ async fn rate_limit_hierarchy_resolution() {
     assert_eq!(
         response.status(),
         429,
-        "Level 1: Third request (474 total) should be rate limited"
+        "Level 1: 51st request (408 total tokens) should be rate limited"
     );
 
     // Test Level 2: Model default (gpt-4 without group) - limit 300
@@ -210,17 +195,25 @@ async fn rate_limit_hierarchy_resolution() {
         "max_tokens": 140
     });
 
-    // First request: 148 tokens
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "client2")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200, "Level 2: First request should succeed");
+    // Make requests up to the limit (300 tokens / 8 tokens per request = 37 requests)
+    for i in 1..=37 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "client2")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            200,
+            "Level 2: Request {} ({} total tokens) should succeed",
+            i,
+            i * 8
+        );
+    }
 
-    // Second request: 296 tokens (still under 300)
+    // 38th request: 304 tokens (exceeds 300 limit)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -228,21 +221,7 @@ async fn rate_limit_hierarchy_resolution() {
         .send()
         .await
         .unwrap();
-    assert_eq!(
-        response.status(),
-        200,
-        "Level 2: Second request (296 total) should succeed"
-    );
-
-    // Third request: 444 tokens (exceeds 300 limit)
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "client2")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 429, "Level 2: Third request should be rate limited");
+    assert_eq!(response.status(), 429, "Level 2: 38th request should be rate limited");
 
     // Test Level 3: Provider + Group (gpt-3.5-turbo + pro group) - limit 200
     let request = json!({
@@ -251,18 +230,26 @@ async fn rate_limit_hierarchy_resolution() {
         "max_tokens": 90
     });
 
-    // First request: 98 tokens
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "client3")
-        .header("X-Group", "pro")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200, "Level 3: First request should succeed");
+    // Make requests up to the limit (200 tokens / 8 tokens per request = 25 requests)
+    for i in 1..=25 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "client3")
+            .header("X-Group", "pro")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            200,
+            "Level 3: Request {} ({} total tokens) should succeed",
+            i,
+            i * 8
+        );
+    }
 
-    // Second request: 196 tokens (under 200)
+    // 26th request: 208 tokens (exceeds 200 limit)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -271,22 +258,7 @@ async fn rate_limit_hierarchy_resolution() {
         .send()
         .await
         .unwrap();
-    assert_eq!(
-        response.status(),
-        200,
-        "Level 3: Second request (196 total) should succeed"
-    );
-
-    // Third request: 294 tokens (exceeds 200 limit)
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "client3")
-        .header("X-Group", "pro")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 429, "Level 3: Third request should be rate limited");
+    assert_eq!(response.status(), 429, "Level 3: 26th request should be rate limited");
 
     // Test Level 4: Provider default (gpt-3.5-turbo without group) - limit 100
     let request = json!({
@@ -295,17 +267,25 @@ async fn rate_limit_hierarchy_resolution() {
         "max_tokens": 40
     });
 
-    // First request: 48 tokens
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "client4")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200, "Level 4: First request should succeed");
+    // Make requests up to the limit (100 tokens / 8 tokens per request = 12 requests)
+    for i in 1..=12 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "client4")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            200,
+            "Level 4: Request {} ({} total tokens) should succeed",
+            i,
+            i * 8
+        );
+    }
 
-    // Second request: 96 tokens (under 100)
+    // 13th request: 104 tokens (exceeds 100 limit)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -313,21 +293,7 @@ async fn rate_limit_hierarchy_resolution() {
         .send()
         .await
         .unwrap();
-    assert_eq!(
-        response.status(),
-        200,
-        "Level 4: Second request (96 total) should succeed"
-    );
-
-    // Third request: 144 tokens (exceeds 100 limit)
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "client4")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 429, "Level 4: Third request should be rate limited");
+    assert_eq!(response.status(), 429, "Level 4: 13th request should be rate limited");
 }
 
 /// Test that different clients have independent rate limits.
@@ -340,12 +306,13 @@ async fn independent_client_rate_limits() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 100
+        input_token_limit = 100
         interval = "60s"
 
         [server.client_identification]
         enabled = true
         client_id = { http_header = "X-Client-Id" }
+
     "#};
 
     let server = builder.build(config).await;
@@ -357,17 +324,19 @@ async fn independent_client_rate_limits() {
         "max_tokens": 80
     });
 
-    // Client 1 uses most of their limit
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "client1")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
+    // Client 1 uses most of their limit (12 requests * 8 tokens = 96 tokens)
+    for i in 1..=12 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "client1")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Client 1 request {} should succeed", i);
+    }
 
-    // Client 1 should be rate limited on next request
+    // Client 1 should be rate limited on 13th request (104 tokens > 100 limit)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -398,45 +367,50 @@ async fn group_based_rate_limits() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 500
+        input_token_limit = 500
         interval = "60s"
 
         [llm.providers.openai.rate_limits.per_user.groups.free]
-        limit = 100
+        input_token_limit = 100
         interval = "60s"
 
         [llm.providers.openai.rate_limits.per_user.groups.pro]
-        limit = 1000
+        input_token_limit = 1000
         interval = "60s"
 
         [server.client_identification]
         enabled = true
-        allowed_groups = ["free", "pro"]  # Must define allowed_groups when using group_id
         client_id = { http_header = "X-Client-Id" }
         group_id = { http_header = "X-Group" }
+
+        [server.client_identification.validation]
+        group_values = ["free", "pro"]  # Must define allowed_groups when using group_id
     "#};
 
     let server = builder.build(config).await;
     let client = &server.client;
 
-    // Free tier client with small limit
+    // Free tier client with small limit (100 tokens)
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Hello"}],
         "max_tokens": 80
     });
 
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "free-client")
-        .header("X-Group", "free")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
+    // Make 12 requests (96 tokens total) - should all succeed
+    for i in 1..=12 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "free-client")
+            .header("X-Group", "free")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Free tier request {} should succeed", i);
+    }
 
-    // Free tier should be rate limited on next request
+    // 13th request should be rate limited (104 tokens > 100 limit)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -447,24 +421,27 @@ async fn group_based_rate_limits() {
         .unwrap();
     assert_eq!(response.status(), 429);
 
-    // Pro tier client with larger limit
+    // Pro tier client with larger limit (1000 tokens)
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Hello"}],
         "max_tokens": 900
     });
 
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "pro-client")
-        .header("X-Group", "pro")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
+    // Make many requests to use most of the limit (125 requests * 8 tokens = 1000 tokens)
+    for i in 1..=125 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "pro-client")
+            .header("X-Group", "pro")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Pro tier request {} should succeed", i);
+    }
 
-    // Pro tier should still have capacity
+    // 126th request should be rate limited (1008 tokens > 1000 limit)
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Hello"}],
@@ -479,7 +456,7 @@ async fn group_based_rate_limits() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 200);
+    assert_eq!(response.status(), 429);
 }
 
 /// Test that requests without required client identification are rejected.
@@ -492,12 +469,13 @@ async fn missing_client_id_rejected_when_required() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 1000
+        input_token_limit = 1000
         interval = "60s"
 
         [server.client_identification]
         enabled = true
         client_id = { http_header = "X-Client-Id" }
+
     "#};
 
     let server = builder.build(config).await;
@@ -516,14 +494,14 @@ async fn missing_client_id_rejected_when_required() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), 401);
+    assert_eq!(response.status(), 400);
 
     let body = response.json::<serde_json::Value>().await.unwrap();
-    assert_eq!(body["error"], "unauthorized");
-    assert_eq!(body["error_description"], "Client identification required");
+    assert_eq!(body["error"], "missing_client_id");
+    assert_eq!(body["error_description"], "Client identification is required");
 }
 
-/// Test that invalid group names are rejected with 403 Forbidden.
+/// Test that invalid group names are rejected with 400 Bad Request.
 #[tokio::test]
 async fn invalid_group_rejected() {
     let openai = OpenAIMock::new("openai").with_models(vec!["gpt-4".to_string()]);
@@ -533,14 +511,16 @@ async fn invalid_group_rejected() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 1000
+        input_token_limit = 1000
         interval = "60s"
 
         [server.client_identification]
         enabled = true
-        allowed_groups = ["gold", "silver", "bronze"]
         client_id = { http_header = "X-Client-Id" }
         group_id = { http_header = "X-Group" }
+
+        [server.client_identification.validation]
+        group_values = ["gold", "silver", "bronze"]
     "#};
 
     let server = builder.build(config).await;
@@ -556,18 +536,18 @@ async fn invalid_group_rejected() {
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
         .header("X-Client-Id", "test-client")
-        .header("X-Group", "platinum") // Not in allowed_groups
+        .header("X-Group", "platinum") // Not in group_values
         .send()
         .await
         .unwrap();
 
-    assert_eq!(response.status(), 403);
+    assert_eq!(response.status(), 400);
 
     let body = response.json::<serde_json::Value>().await.unwrap();
     insta::assert_json_snapshot!(body, @r#"
     {
-      "error": "forbidden",
-      "error_description": "Access denied"
+      "error": "invalid_group",
+      "error_description": "The specified group is not valid"
     }
     "#);
 }
@@ -582,26 +562,38 @@ async fn clear_token_accumulation() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 100
+        input_token_limit = 100
         interval = "60s"
 
         [server.client_identification]
         enabled = true
         client_id = { http_header = "X-Client-Id" }
+
     "#};
 
     let server = builder.build(config).await;
     let client = &server.client;
 
-    // Test accumulation: 30 + 30 + 45 = 105 tokens (exceeds 100)
-
-    // Request 1: 30 tokens (30 total)
+    // Test accumulation: each request is ~6 input tokens (max_tokens not counted)
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Hi"}],  // ~6 input tokens
-        "max_tokens": 24  // 6 + 24 = 30 tokens
+        "max_tokens": 24
     });
 
+    // Make 12 requests that should stay under the 100 token limit
+    for i in 1..=12 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "accumulation-test")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Request {} should succeed", i);
+    }
+
+    // 13th request: should exceed the limit
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -609,37 +601,7 @@ async fn clear_token_accumulation() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 200, "Request 1 (30 tokens) should succeed");
-
-    // Request 2: 30 tokens (60 total)
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "accumulation-test")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200, "Request 2 (60 total tokens) should succeed");
-
-    // Request 3: 45 tokens (105 total - exceeds limit)
-    let request = json!({
-        "model": "openai/gpt-4",
-        "messages": [{"role": "user", "content": "Hi"}],
-        "max_tokens": 39  // 6 + 39 = 45 tokens
-    });
-
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "accumulation-test")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        response.status(),
-        429,
-        "Request 3 (105 total tokens) should be rate limited"
-    );
+    assert_eq!(response.status(), 429, "Request 13 should be rate limited");
 }
 
 /// Test exact boundary conditions for rate limits.
@@ -652,24 +614,38 @@ async fn exact_boundary_conditions() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 100
+        input_token_limit = 100
         interval = "60s"
 
         [server.client_identification]
         enabled = true
         client_id = { http_header = "X-Client-Id" }
+
     "#};
 
     let server = builder.build(config).await;
     let client = &server.client;
 
-    // Test 1: Exactly at limit (100 tokens) should succeed
+    // Test 1: Make requests up to the limit
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Test"}],  // ~8 input tokens
-        "max_tokens": 92  // 8 + 92 = 100 tokens exactly
+        "max_tokens": 92
     });
 
+    // Make 12 requests that should succeed
+    for i in 1..=12 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "boundary-test-1")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Request {} should succeed", i);
+    }
+
+    // 13th request should be rate limited
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -677,35 +653,28 @@ async fn exact_boundary_conditions() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 200, "Request at exactly 100 tokens should succeed");
+    assert_eq!(response.status(), 429, "Request exceeding limit should be rate limited");
 
-    // Any additional request should fail
+    // Test 2: Different client should be independent
     let request = json!({
         "model": "openai/gpt-4",
-        "messages": [{"role": "user", "content": "A"}],  // ~5 input tokens
-        "max_tokens": 1  // 5 + 1 = 6 tokens
+        "messages": [{"role": "user", "content": "Test"}],
+        "max_tokens": 93
     });
 
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "boundary-test-1")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        response.status(),
-        429,
-        "Any request after reaching exact limit should fail"
-    );
+    // Make requests with different client - should succeed
+    for i in 1..=12 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "boundary-test-2") // Different client
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Request {} should succeed", i);
+    }
 
-    // Test 2: Just over limit (101 tokens) should fail immediately
-    let request = json!({
-        "model": "openai/gpt-4",
-        "messages": [{"role": "user", "content": "Test"}],  // ~8 input tokens
-        "max_tokens": 93  // 8 + 93 = 101 tokens
-    });
-
+    // 13th request should fail
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -713,15 +682,28 @@ async fn exact_boundary_conditions() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 429, "Request for 101 tokens should fail immediately");
+    assert_eq!(response.status(), 429, "13th request should be rate limited");
 
-    // Test 3: Just under limit (99 tokens) should succeed
+    // Test 3: Just under limit should succeed
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Test"}],  // ~8 input tokens
-        "max_tokens": 91  // 8 + 91 = 99 tokens
+        "max_tokens": 91
     });
 
+    // Make 12 requests (96 tokens) - should all succeed
+    for i in 1..=12 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "boundary-test-3")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Request {} should succeed", i);
+    }
+
+    // 13th request should fail (104 tokens > 100 limit)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -729,23 +711,7 @@ async fn exact_boundary_conditions() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 200, "Request for 99 tokens should succeed");
-
-    // Can still make a 1-token request
-    let request = json!({
-        "model": "openai/gpt-4",
-        "messages": [{"role": "user", "content": ""}],  // ~4 input tokens
-        "max_tokens": 0  // Minimum possible, but let's use 1 to be safe
-    });
-
-    let _response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "boundary-test-3")
-        .send()
-        .await
-        .unwrap();
-    // This might succeed or fail depending on exact token counting, but we're at 99+
+    assert_eq!(response.status(), 429, "13th request should be rate limited");
 }
 
 /// Test that rate limits reset after the interval expires.
@@ -758,24 +724,38 @@ async fn rate_limit_reset_after_interval() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 50
+        input_token_limit = 50
         interval = "2s"  # Short interval for testing
 
         [server.client_identification]
         enabled = true
         client_id = { http_header = "X-Client-Id" }
+
     "#};
 
     let server = builder.build(config).await;
     let client = &server.client;
 
-    // Request that uses up the limit
+    // Request that uses up the limit (50 tokens / 8 tokens per request = 6 requests)
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Test"}],  // ~8 input tokens
-        "max_tokens": 42  // 8 + 42 = 50 tokens exactly
+        "max_tokens": 42
     });
 
+    // Make 6 requests (48 tokens) - should all succeed
+    for i in 1..=6 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "reset-test")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Request {} should succeed", i);
+    }
+
+    // 7th request should fail (56 tokens > 50 limit)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -783,23 +763,7 @@ async fn rate_limit_reset_after_interval() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 200, "First request at limit should succeed");
-
-    // Second request should fail (limit exhausted)
-    let small_request = json!({
-        "model": "openai/gpt-4",
-        "messages": [{"role": "user", "content": "Hi"}],
-        "max_tokens": 1
-    });
-
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&small_request)
-        .header("X-Client-Id", "reset-test")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 429, "Request after limit exhausted should fail");
+    assert_eq!(response.status(), 429, "7th request should fail (limit exhausted)");
 
     // Wait for interval to expire (2 seconds + buffer)
     tokio::time::sleep(tokio::time::Duration::from_millis(2500)).await;
@@ -815,9 +779,9 @@ async fn rate_limit_reset_after_interval() {
     assert_eq!(response.status(), 200, "Request after interval reset should succeed");
 }
 
-/// Test that missing group_id when allowed_groups is configured uses default rate limits.
+/// Test that missing group_id when group_values is configured uses default rate limits.
 #[tokio::test]
-async fn missing_group_when_allowed_groups_configured() {
+async fn missing_group_when_group_values_configured() {
     let openai = OpenAIMock::new("openai").with_models(vec!["gpt-4".to_string()]);
 
     let mut builder = TestServer::builder();
@@ -825,14 +789,16 @@ async fn missing_group_when_allowed_groups_configured() {
 
     let config = indoc! {r#"
         [llm.providers.openai.rate_limits.per_user]
-        limit = 1000
+        input_token_limit = 1000
         interval = "60s"
 
         [server.client_identification]
         enabled = true
-        allowed_groups = ["gold", "silver", "bronze"]
         client_id = { http_header = "X-Client-Id" }
         group_id = { http_header = "X-Group" }
+
+        [server.client_identification.validation]
+        group_values = ["gold", "silver", "bronze"]
     "#};
 
     let server = builder.build(config).await;
@@ -843,7 +809,7 @@ async fn missing_group_when_allowed_groups_configured() {
         "messages": [{"role": "user", "content": "Test"}]
     });
 
-    // Request without group header when allowed_groups is configured
+    // Request without group header when group_values is configured
     // Should succeed and use default rate limits
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
@@ -864,4 +830,178 @@ async fn missing_group_when_allowed_groups_configured() {
     // Verify the response is valid
     let body = response.json::<serde_json::Value>().await.unwrap();
     assert!(body["choices"].is_array());
+}
+
+/// Test that token rate limiting allows full burst capacity consumption.
+#[tokio::test]
+async fn token_burst_capacity_allows_full_limit() {
+    let openai = OpenAIMock::new("openai").with_models(vec!["gpt-4".to_string()]);
+
+    let mut builder = TestServer::builder();
+    builder.spawn_llm(openai).await;
+
+    let config = indoc! {r#"
+        [llm.providers.openai.rate_limits.per_user]
+        input_token_limit = 50
+        interval = "60s"
+
+        [server.client_identification]
+        enabled = true
+        client_id = { http_header = "X-Client-Id" }
+    "#};
+
+    let server = builder.build(config).await;
+    let client = &server.client;
+
+    // Make requests that consume exactly 48 tokens (6 requests * 8 tokens)
+    // This is just under the 50 token limit
+    let request = json!({
+        "model": "openai/gpt-4",
+        "messages": [{"role": "user", "content": "Test"}],
+        "max_tokens": 10
+    });
+
+    // Make 6 requests (48 tokens total)
+    for i in 1..=6 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "burst-test")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            200,
+            "Request {} should succeed (within burst capacity)",
+            i
+        );
+    }
+
+    // 7th request should fail (56 tokens > 50 limit)
+    let response = client
+        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+        .json(&request)
+        .header("X-Client-Id", "burst-test")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        429,
+        "7th request should be rate limited (exceeds limit)"
+    );
+}
+
+/// Test concurrent token requests with in-memory storage.
+#[tokio::test]
+async fn concurrent_token_requests_memory() {
+    use std::sync::Arc;
+
+    let openai = OpenAIMock::new("openai").with_models(vec!["gpt-4".to_string()]);
+
+    let mut builder = TestServer::builder();
+    builder.spawn_llm(openai).await;
+
+    let config = indoc! {r#"
+        [llm.providers.openai.rate_limits.per_user]
+        input_token_limit = 100
+        interval = "60s"
+
+        [server.client_identification]
+        enabled = true
+        client_id = { http_header = "X-Client-Id" }
+    "#};
+
+    let server = Arc::new(builder.build(config).await);
+
+    // Launch 20 concurrent requests, each consuming ~8 tokens
+    let mut handles = vec![];
+
+    for _ in 0..20 {
+        let server_clone = Arc::clone(&server);
+        let handle = tokio::spawn(async move {
+            let request = json!({
+                "model": "openai/gpt-4",
+                "messages": [{"role": "user", "content": "Test"}],
+                "max_tokens": 10
+            });
+
+            server_clone
+                .client
+                .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+                .json(&request)
+                .header("X-Client-Id", "concurrent-test")
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .as_u16()
+        });
+        handles.push(handle);
+    }
+
+    // Collect results
+    let mut success_count = 0;
+    let mut rate_limited_count = 0;
+
+    for handle in handles {
+        #[allow(clippy::panic)]
+        match handle.await.unwrap() {
+            200 => success_count += 1,
+            429 => rate_limited_count += 1,
+            status => panic!("Unexpected status code: {status}"),
+        }
+    }
+
+    // With 100 token limit and ~8 tokens per request, should allow ~12 requests
+    assert!(
+        (11..=13).contains(&success_count),
+        "Expected 11-13 successful requests, got {success_count}"
+    );
+    assert_eq!(
+        success_count + rate_limited_count,
+        20,
+        "All requests should either succeed or be rate limited"
+    );
+}
+
+/// Test that zero token requests are handled properly.
+#[tokio::test]
+async fn zero_token_request_handling() {
+    let openai = OpenAIMock::new("openai").with_models(vec!["gpt-4".to_string()]);
+
+    let mut builder = TestServer::builder();
+    builder.spawn_llm(openai).await;
+
+    let config = indoc! {r#"
+        [llm.providers.openai.rate_limits.per_user]
+        input_token_limit = 100
+        interval = "60s"
+
+        [server.client_identification]
+        enabled = true
+        client_id = { http_header = "X-Client-Id" }
+    "#};
+
+    let server = builder.build(config).await;
+    let client = &server.client;
+
+    // Empty message (should still count as minimum tokens for request overhead)
+    let request = json!({
+        "model": "openai/gpt-4",
+        "messages": [{"role": "user", "content": ""}],
+        "max_tokens": 10
+    });
+
+    // Even empty requests have some token overhead (role, structure, etc.)
+    // Should still succeed but consume minimal tokens
+    let response = client
+        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+        .json(&request)
+        .header("X-Client-Id", "zero-test")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200, "Empty content request should still succeed");
 }

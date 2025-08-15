@@ -25,7 +25,7 @@ async fn rate_limiting_with_headers() {
         storage = {{ type = "redis", url = "redis://127.0.0.1:6379", key_prefix = "{prefix}" }}
 
         [llm.providers.openai.rate_limits.per_user]
-        limit = 100
+        input_token_limit = 100
         interval = "60s"
 
         [server.client_identification]
@@ -36,40 +36,26 @@ async fn rate_limiting_with_headers() {
     let server = builder.build(&config).await;
     let client = &server.client;
 
-    // Each request: ~8 input tokens + 30 max_tokens = 38 tokens
+    // Each request: ~8 input tokens (max_tokens not counted)
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Hello"}],
         "max_tokens": 30
     });
 
-    // First request: 38 tokens (should succeed)
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "redis-client-headers-test")
-        .send()
-        .await
-        .unwrap();
+    // Make 12 requests (96 tokens) - should all succeed
+    for i in 1..=12 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "redis-client-headers-test")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Request {} should succeed", i);
+    }
 
-    assert_eq!(response.status(), 200, "First request (38 tokens) should succeed");
-
-    // Second request: 76 tokens total (should succeed)
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "redis-client-headers-test")
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(
-        response.status(),
-        200,
-        "Second request (76 total tokens) should succeed"
-    );
-
-    // Third request: 114 tokens total (should fail - exceeds 100 limit)
+    // 13th request: 104 tokens total (should fail - exceeds 100 limit)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -81,7 +67,7 @@ async fn rate_limiting_with_headers() {
     assert_eq!(
         response.status(),
         429,
-        "Third request (114 total tokens) should be rate limited"
+        "13th request (104 total tokens) should be rate limited"
     );
 
     // Verify error response format
@@ -116,22 +102,24 @@ async fn group_based_rate_limiting() {
         storage = {{ type = "redis", url = "redis://127.0.0.1:6379", key_prefix = "{prefix}" }}
 
         [llm.providers.openai.rate_limits.per_user]
-        limit = 100
+        input_token_limit = 100
         interval = "60s"
 
         [llm.providers.openai.rate_limits.per_user.groups.premium]
-        limit = 500
+        input_token_limit = 500
         interval = "60s"
 
         [llm.providers.openai.rate_limits.per_user.groups.basic]
-        limit = 50
+        input_token_limit = 50
         interval = "60s"
 
         [server.client_identification]
         enabled = true
-        allowed_groups = ["premium", "basic"]  # Must define allowed_groups when using group_id
         client_id = {{ http_header = "X-Client-Id" }}
         group_id = {{ http_header = "X-Group" }}
+
+        [server.client_identification.validation]
+        group_values = ["premium", "basic"]  # Must define allowed_groups when using group_id
     "#};
 
     let server = builder.build(&config).await;
@@ -141,20 +129,23 @@ async fn group_based_rate_limiting() {
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Test"}],
-        "max_tokens": 40  // ~48 tokens total
+        "max_tokens": 40
     });
 
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "basic-group-client")
-        .header("X-Group", "basic")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200, "Basic tier first request should succeed");
+    // Make 6 requests (48 tokens) - should all succeed
+    for i in 1..=6 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "basic-group-client")
+            .header("X-Group", "basic")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Basic tier request {} should succeed", i);
+    }
 
-    // Basic tier should be rate limited on next request (48 + 48 = 96 > 50)
+    // 7th request should be rate limited (56 tokens > 50 limit)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -163,27 +154,29 @@ async fn group_based_rate_limiting() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 429, "Basic tier should be rate limited");
+    assert_eq!(response.status(), 429, "Basic tier 7th request should be rate limited");
 
     // Premium tier client with larger limit (500 tokens)
     let large_request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Test"}],
-        "max_tokens": 200  // ~208 tokens total
+        "max_tokens": 200
     });
 
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&large_request)
-        .header("X-Client-Id", "premium-group-client")
-        .header("X-Group", "premium")
-        .send()
-        .await
-        .unwrap();
+    // Make 62 requests (496 tokens) - should all succeed
+    for i in 1..=62 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&large_request)
+            .header("X-Client-Id", "premium-group-client")
+            .header("X-Group", "premium")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Premium tier request {} should succeed", i);
+    }
 
-    assert_eq!(response.status(), 200, "Premium tier should handle large requests");
-
-    // Premium tier should still have capacity for another request
+    // 63rd request should be rate limited (504 tokens > 500 limit)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&large_request)
@@ -195,8 +188,8 @@ async fn group_based_rate_limiting() {
 
     assert_eq!(
         response.status(),
-        200,
-        "Premium tier should still have capacity (416/500)"
+        429,
+        "Premium tier 63rd request should be rate limited"
     );
 }
 
@@ -216,12 +209,13 @@ async fn independent_client_rate_limits() {
         storage = {{ type = "redis", url = "redis://127.0.0.1:6379", key_prefix = "{}" }}
 
         [llm.providers.openai.rate_limits.per_user]
-        limit = 100
+        input_token_limit = 100
         interval = "60s"
 
         [server.client_identification]
         enabled = true
         client_id = {{ http_header = "X-Client-Id" }}
+
     "#,
         prefix
     );
@@ -232,20 +226,22 @@ async fn independent_client_rate_limits() {
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Hello"}],
-        "max_tokens": 80  // ~88 tokens total
+        "max_tokens": 80
     });
 
-    // Client 1 uses most of their limit
-    let response = client
-        .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-        .json(&request)
-        .header("X-Client-Id", "redis-independent-client-1")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200, "Client 1 first request should succeed");
+    // Client 1 uses most of their limit (12 requests * 8 tokens = 96 tokens)
+    for i in 1..=12 {
+        let response = client
+            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+            .json(&request)
+            .header("X-Client-Id", "redis-independent-client-1")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "Client 1 request {} should succeed", i);
+    }
 
-    // Client 1 should be rate limited on next request (88 + 88 = 176 > 100)
+    // Client 1 should be rate limited on 13th request (104 tokens > 100 limit)
     let response = client
         .request(reqwest::Method::POST, "/llm/v1/chat/completions")
         .json(&request)
@@ -253,7 +249,7 @@ async fn independent_client_rate_limits() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 429, "Client 1 should be rate limited");
+    assert_eq!(response.status(), 429, "Client 1 13th request should be rate limited");
 
     // But Client 2 should still be able to make requests (independent rate limit)
     let response = client
@@ -277,12 +273,13 @@ async fn rate_limit_persistence() {
         storage = {{ type = "redis", url = "redis://127.0.0.1:6379", key_prefix = "{}" }}
 
         [llm.providers.openai.rate_limits.per_user]
-        limit = 100
+        input_token_limit = 100
         interval = "300s"  # 5 minute window for persistence test
 
         [server.client_identification]
         enabled = true
         client_id = {{ http_header = "X-Client-Id" }}
+
     "#,
         prefix
     );
@@ -300,18 +297,20 @@ async fn rate_limit_persistence() {
         let request = json!({
             "model": "openai/gpt-4",
             "messages": [{"role": "user", "content": "Test"}],
-            "max_tokens": 80  // ~88 tokens
+            "max_tokens": 80
         });
 
-        let response = client
-            .request(reqwest::Method::POST, "/llm/v1/chat/completions")
-            .json(&request)
-            .header("X-Client-Id", "redis-persistent-client")
-            .send()
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), 200, "First server request should succeed");
+        // Make 12 requests (96 tokens) in first server instance
+        for i in 1..=12 {
+            let response = client
+                .request(reqwest::Method::POST, "/llm/v1/chat/completions")
+                .json(&request)
+                .header("X-Client-Id", "redis-persistent-client")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 200, "First server request {} should succeed", i);
+        }
     }
 
     // Second server instance (simulating restart)
@@ -327,10 +326,11 @@ async fn rate_limit_persistence() {
         let request = json!({
             "model": "openai/gpt-4",
             "messages": [{"role": "user", "content": "Test"}],
-            "max_tokens": 15  // ~23 tokens, total: 88 + 23 = 111 > 100
+            "max_tokens": 15
         });
 
-        // Should be rate limited because Redis persisted the previous consumption
+        // Should be rate limited because Redis persisted the previous consumption (96 tokens used)
+        // The next request would be 104 tokens total, exceeding the 100 limit
         let response = client
             .request(reqwest::Method::POST, "/llm/v1/chat/completions")
             .json(&request)
@@ -363,12 +363,13 @@ async fn concurrent_requests() {
         storage = {{ type = "redis", url = "redis://127.0.0.1:6379", key_prefix = "{}" }}
 
         [llm.providers.openai.rate_limits.per_user]
-        limit = 200
+        input_token_limit = 200
         interval = "60s"
 
         [server.client_identification]
         enabled = true
         client_id = {{ http_header = "X-Client-Id" }}
+
     "#,
         prefix
     );
@@ -380,11 +381,11 @@ async fn concurrent_requests() {
     let request = json!({
         "model": "openai/gpt-4",
         "messages": [{"role": "user", "content": "Test"}],
-        "max_tokens": 45  // ~53 tokens per request
+        "max_tokens": 45
     });
 
-    // Send 4 concurrent requests (4 * 53 = 212 tokens > 200 limit)
-    let futures = (0..4).map(|_| {
+    // Send 26 concurrent requests (26 * 8 = 208 tokens > 200 limit)
+    let futures = (0..26).map(|_| {
         let client = client.clone();
         let req = request.clone();
 
@@ -405,17 +406,17 @@ async fn concurrent_requests() {
     let success_count = responses.iter().filter(|r| r.status() == 200).count();
     let rate_limited_count = responses.iter().filter(|r| r.status() == 429).count();
 
-    // At least one should be rate limited (since 4 * 53 > 200)
+    // At least one should be rate limited (since 26 * 8 = 208 > 200)
     assert!(rate_limited_count >= 1, "At least one request should be rate limited");
 
     assert!(
-        success_count >= 3,
-        "At least 3 requests should succeed (200 / 53 = 3.7)"
+        success_count >= 25,
+        "At least 25 requests should succeed (200 / 8 = 25)"
     );
 
     assert_eq!(
         success_count + rate_limited_count,
-        4,
+        26,
         "All requests should either succeed or be rate limited"
     );
 }

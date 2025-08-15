@@ -322,7 +322,8 @@ group_id.jwt_claim = "groups"                  # JWT claim containing user's gro
 group_id.http_header = "X-Group-ID"            # Extract ID from HTTP header
 
 # You must provide a list of allowed groups
-allowed_groups = ["free", "pro", "max"]
+[server.client_identification.validation]
+group_values = ["free", "pro", "max"]
 ```
 
 Without client identification, rate limits cannot be enforced and requests will fail with a configuration error.
@@ -343,33 +344,31 @@ The most specific applicable limit is always used.
 ```toml
 # Provider-level default rate limit (applies to all models)
 [llm.providers.openai.rate_limits.per_user]
-limit = 100000        # 100K tokens
-interval = "1m"       # Per minute
-output_buffer = 2000  # Reserve 2K tokens for response
+input_token_limit = 100000        # 100K input tokens
+interval = "1m"                   # Per minute
 
 # Model-specific rate limit (overrides provider default)
 [llm.providers.openai.models.gpt-4.rate_limits.per_user]
-limit = 50000         # More restrictive for expensive model
+input_token_limit = 50000         # More restrictive for expensive model
 interval = "30s"
-output_buffer = 1000  # Reserve 1K tokens for response
 ```
 
 ##### Group-Based Rate Limits
 
-Configure different limits for user groups (requires `group_id` and `allowed_groups` in client identification):
+Configure different limits for user groups (requires `group_id` and `group_values` in client identification):
 
 ```toml
 # Provider-level group limits
 [llm.providers.openai.rate_limits.per_user.groups]
-free = { limit = 10000, interval = "60s", output_buffer = 500 }
-pro = { limit = 100000, interval = "60s", output_buffer = 2000 }
-enterprise = { limit = 1000000, interval = "60s", output_buffer = 5000 }
+free = { input_token_limit = 10000, interval = "60s" }
+pro = { input_token_limit = 100000, interval = "60s" }
+enterprise = { input_token_limit = 1000000, interval = "60s" }
 
 # Model-specific group limits (override provider groups)
 [llm.providers.openai.models.gpt-4.rate_limits.per_user.groups]
-free = { limit = 5000, interval = "60s", output_buffer = 500 }
-pro = { limit = 50000, interval = "60s", output_buffer = 1000 }
-enterprise = { limit = 500000, interval = "60s", output_buffer = 2000 }
+free = { input_token_limit = 5000, interval = "60s" }
+pro = { input_token_limit = 50000, interval = "60s" }
+enterprise = { input_token_limit = 500000, interval = "60s" }
 ```
 
 The limits are per user, but you can define different limits if the user is part of a specific group. If the user does not belong to any group, they will be assigned to the per-user limits.
@@ -382,7 +381,8 @@ The limits are per user, but you can define different limits if the user is part
 enabled = true
 client_id.jwt_claim = "sub"
 group_id.jwt_claim = "subscription_tier"
-allowed_groups = ["free", "pro", "enterprise"]
+[server.client_identification.validation]
+group_values = ["free", "pro", "enterprise"]
 
 # OpenAI provider with comprehensive rate limiting
 [llm.providers.openai]
@@ -391,23 +391,22 @@ api_key = "{{ env.OPENAI_API_KEY }}"
 
 # Provider-level defaults
 [llm.providers.openai.rate_limits.per_user]
-limit = 100000
+input_token_limit = 100000
 interval = "60s"
-output_buffer = 2000
 
 [llm.providers.openai.rate_limits.per_user.groups]
-free = { limit = 10000, interval = "60s", output_buffer = 500 }
-pro = { limit = 100000, interval = "60s", output_buffer = 2000 }
+free = { input_token_limit = 10000, interval = "60s" }
+pro = { input_token_limit = 100000, interval = "60s" }
 
 # GPT-4 specific limits (more restrictive)
 [llm.providers.openai.models.gpt-4]
 [llm.providers.openai.models.gpt-4.rate_limits.per_user]
-limit = 50000
+input_token_limit = 50000
 interval = "60s"
 
 [llm.providers.openai.models.gpt-4.rate_limits.per_user.groups]
-free = { limit = 5000, interval = "60s" }
-pro = { limit = 50000, interval = "60s" }
+free = { input_token_limit = 5000, interval = "60s" }
+pro = { input_token_limit = 50000, interval = "60s" }
 
 # GPT-3.5 uses provider defaults
 [llm.providers.openai.models.gpt-3-5-turbo]
@@ -415,12 +414,12 @@ pro = { limit = 50000, interval = "60s" }
 
 ##### How Token Counting Works
 
-1. **Input Tokens**: Counted from the request's messages and system prompts
-2. **Output Allowance**: Reserved tokens based on `max_tokens` parameter or configured `output_buffer`
-3. **Pre-check**: Total (input + allowance) is checked against rate limits before processing
+1. **Input Tokens Only**: Rate limiting is based solely on input tokens counted from the request's messages and system prompts
+2. **No Output Buffering**: Output tokens and `max_tokens` parameter are NOT considered in rate limit calculations
+3. **Pre-check**: Input tokens are checked against rate limits before processing
 4. **Token Accumulation**: Uses a sliding window algorithm to track usage over time
 
-Note: The system reserves the full output allowance upfront. Actual token usage is not reconciled after completion.
+Note: The rate limiting is designed to be predictable and based only on what the client sends, not on variable output sizes.
 
 ##### Rate Limit Response
 

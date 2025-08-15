@@ -16,7 +16,7 @@ use config::ClientIdentificationConfig;
 use http::{Request, Response, StatusCode};
 use tower::Layer;
 
-use crate::client_identification::{ClientIdentificationError, extract_client_identity};
+use crate::client_id::{ClientIdentificationError, extract_client_identity};
 
 #[derive(Clone)]
 pub struct ClientIdentificationLayer(Arc<ClientIdentificationConfig>);
@@ -81,34 +81,34 @@ where
                     next.call(req).await
                 }
                 Err(ClientIdentificationError::UnauthorizedGroup { group, allowed_groups }) => {
-                    // Client is in an unauthorized group - log details internally but don't leak them
+                    // Client is in an invalid group - this is a bad request, not authentication
                     log::warn!(
-                        "Access denied: client attempted to access with unauthorized group '{}', allowed: {:?}",
+                        "Invalid group: client attempted to use group '{}', allowed: {:?}",
                         group,
                         allowed_groups
                     );
 
-                    // Generic error response that doesn't leak group information
+                    // Return 400 Bad Request for invalid group
                     let response = Response::builder()
-                        .status(StatusCode::FORBIDDEN)
+                        .status(StatusCode::BAD_REQUEST)
                         .header("Content-Type", "application/json")
                         .body(Body::from(
-                            r#"{"error":"forbidden","error_description":"Access denied"}"#,
+                            r#"{"error":"invalid_group","error_description":"The specified group is not valid"}"#,
                         ))
                         .unwrap();
 
                     Ok(response)
                 }
                 Err(ClientIdentificationError::MissingIdentification) => {
-                    // Client identification is required but missing - log internally
-                    log::debug!("Access denied: client identification required but not provided");
+                    // Client identification is required but missing - this is a bad request
+                    log::debug!("Bad request: client identification required but not provided");
 
-                    // Generic error response that doesn't leak authentication requirements
+                    // Return 400 Bad Request for missing required client ID
                     let response = Response::builder()
-                        .status(StatusCode::UNAUTHORIZED)
+                        .status(StatusCode::BAD_REQUEST)
                         .header("Content-Type", "application/json")
                         .body(Body::from(
-                            r#"{"error":"unauthorized","error_description":"Client identification required"}"#,
+                            r#"{"error":"missing_client_id","error_description":"Client identification is required"}"#,
                         ))
                         .unwrap();
 

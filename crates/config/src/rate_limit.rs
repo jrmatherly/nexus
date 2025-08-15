@@ -9,29 +9,22 @@ use std::time::Duration;
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TokenRateLimit {
-    /// Maximum number of tokens allowed within the interval window.
-    pub limit: u64,
+    /// Maximum number of input tokens allowed within the interval window.
+    pub input_token_limit: u64,
     /// Time window for the rate limit.
     #[serde(deserialize_with = "deserialize_duration")]
     pub interval: Duration,
-    /// Buffer for output token estimation.
-    /// Used when max_tokens is not specified in the request.
-    #[serde(default)]
-    pub output_buffer: Option<u64>,
 }
 
 /// Per-user rate limits with group-specific overrides.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PerUserRateLimits {
-    /// Default per-user rate limit.
-    pub limit: u64,
+    /// Default per-user input token limit.
+    pub input_token_limit: u64,
     /// Time window for the rate limit.
     #[serde(deserialize_with = "deserialize_duration")]
     pub interval: Duration,
-    /// Buffer for output token estimation.
-    #[serde(default)]
-    pub output_buffer: Option<u64>,
     /// Group-specific per-user rate limits.
     #[serde(default)]
     pub groups: BTreeMap<String, TokenRateLimit>,

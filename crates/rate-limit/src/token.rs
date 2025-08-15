@@ -6,7 +6,7 @@ use std::time::Duration;
 use config::{PerUserRateLimits, StorageConfig, TokenRateLimit, TokenRateLimitsConfig};
 
 use crate::error::RateLimitError;
-use crate::storage::{InMemoryStorage, RateLimitStorage, StorageError};
+use crate::storage::{InMemoryStorage, RateLimitStorage, StorageError, TokenRateLimitContext};
 
 /// Request information for token-based rate limiting.
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ pub struct TokenRateLimitRequest {
     /// Model name (e.g., "gpt-4", "claude-3").
     pub model: Option<String>,
     /// Number of tokens to consume.
-    pub tokens: usize,
+    pub input_tokens: usize,
 }
 
 /// Storage backend for token rate limiting.
@@ -32,14 +32,14 @@ enum Storage {
 impl Storage {
     async fn check_and_consume_tokens(
         &self,
-        key: &str,
+        context: &TokenRateLimitContext<'_>,
         tokens: u32,
         limit: u32,
         interval: Duration,
     ) -> Result<crate::storage::RateLimitResult, StorageError> {
         match self {
-            Storage::Memory(storage) => storage.check_and_consume_tokens(key, tokens, limit, interval).await,
-            Storage::Redis(storage) => storage.check_and_consume_tokens(key, tokens, limit, interval).await,
+            Storage::Memory(storage) => storage.check_and_consume_tokens(context, tokens, limit, interval).await,
+            Storage::Redis(storage) => storage.check_and_consume_tokens(context, tokens, limit, interval).await,
         }
     }
 }
@@ -86,26 +86,25 @@ impl TokenRateLimitManager {
             }
         };
 
-        // Create storage key based on client, group, provider, and model
-        let key = format!(
-            "token:{}:{}:{}:{}",
-            request.client_id,
-            request.group.as_deref().unwrap_or("default"),
-            request.provider,
-            request.model.as_deref().unwrap_or("default")
-        );
+        // Create context for the storage layer
+        let context = TokenRateLimitContext {
+            client_id: &request.client_id,
+            group: request.group.as_deref(),
+            provider: &request.provider,
+            model: request.model.as_deref(),
+        };
 
         log::debug!(
-            "Checking token rate limit for key '{}': {} tokens against limit of {} per {:?}",
-            key,
-            request.tokens,
-            rate_limit.limit,
+            "Checking token rate limit for client '{}': {} input tokens against limit of {} per {:?}",
+            request.client_id,
+            request.input_tokens,
+            rate_limit.input_token_limit,
             rate_limit.interval
         );
 
         // Check rate limit using the storage backend with token consumption
-        let tokens_to_consume = request.tokens as u32;
-        let token_limit = rate_limit.limit as u32;
+        let tokens_to_consume = request.input_tokens as u32;
+        let token_limit = rate_limit.input_token_limit as u32;
 
         if tokens_to_consume == 0 || token_limit == 0 {
             // Edge case: no tokens requested or no limit set
@@ -114,7 +113,7 @@ impl TokenRateLimitManager {
 
         let result = self
             .storage
-            .check_and_consume_tokens(&key, tokens_to_consume, token_limit, rate_limit.interval)
+            .check_and_consume_tokens(&context, tokens_to_consume, token_limit, rate_limit.interval)
             .await
             .map_err(RateLimitError::Storage)?;
 
@@ -144,9 +143,8 @@ impl TokenRateLimitManager {
 /// Helper to convert PerUserRateLimits to TokenRateLimit for the default case.
 fn per_user_to_token_limit(per_user: &PerUserRateLimits) -> TokenRateLimit {
     TokenRateLimit {
-        limit: per_user.limit,
+        input_token_limit: per_user.input_token_limit,
         interval: per_user.interval,
-        output_buffer: per_user.output_buffer,
     }
 }
 
@@ -205,18 +203,16 @@ mod tests {
         let default_limit = default.unwrap_or(1000);
         TokenRateLimitsConfig {
             per_user: Some(PerUserRateLimits {
-                limit: default_limit,
+                input_token_limit: default_limit,
                 interval: Duration::from_secs(60),
-                output_buffer: Some(500),
                 groups: groups
                     .into_iter()
                     .map(|(name, limit)| {
                         (
                             name.to_string(),
                             TokenRateLimit {
-                                limit,
+                                input_token_limit: limit,
                                 interval: Duration::from_secs(60),
-                                output_buffer: Some(500),
                             },
                         )
                     })
@@ -231,7 +227,7 @@ mod tests {
         let model_limits = create_limits(Some(3000), vec![("pro", 4000)]);
 
         let limit = resolve_token_rate_limit(Some("pro"), Some(&provider_limits), Some(&model_limits));
-        assert_eq!(limit.unwrap().limit, 4000); // Model + Group
+        assert_eq!(limit.unwrap().input_token_limit, 4000); // Model + Group
     }
 
     #[test]
@@ -240,7 +236,7 @@ mod tests {
         let model_limits = create_limits(Some(3000), vec![("enterprise", 4000)]);
 
         let limit = resolve_token_rate_limit(Some("pro"), Some(&provider_limits), Some(&model_limits));
-        assert_eq!(limit.unwrap().limit, 3000); // Model default
+        assert_eq!(limit.unwrap().input_token_limit, 3000); // Model default
     }
 
     #[test]
@@ -248,7 +244,7 @@ mod tests {
         let provider_limits = create_limits(Some(1000), vec![("pro", 2000)]);
 
         let limit = resolve_token_rate_limit(Some("pro"), Some(&provider_limits), None);
-        assert_eq!(limit.unwrap().limit, 2000); // Provider + Group
+        assert_eq!(limit.unwrap().input_token_limit, 2000); // Provider + Group
     }
 
     #[test]
@@ -256,7 +252,7 @@ mod tests {
         let provider_limits = create_limits(Some(1000), vec![("enterprise", 2000)]);
 
         let limit = resolve_token_rate_limit(Some("pro"), Some(&provider_limits), None);
-        assert_eq!(limit.unwrap().limit, 1000); // Provider default
+        assert_eq!(limit.unwrap().input_token_limit, 1000); // Provider default
     }
 
     #[test]

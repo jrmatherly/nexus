@@ -34,7 +34,7 @@ fn get_tokenizer() -> &'static CoreBPE {
 ///
 /// This methodology follows OpenAI's official token counting guidelines to ensure
 /// accurate rate limiting based on actual API consumption.
-pub(crate) fn count_request_tokens(request: &ChatCompletionRequest) -> usize {
+pub(crate) fn count_input_tokens(request: &ChatCompletionRequest) -> usize {
     // Get the cl100k_base tokenizer used by GPT-4 and GPT-3.5-turbo
     let tokenizer = get_tokenizer();
     let mut total = 0;
@@ -91,7 +91,7 @@ mod tests {
             presence_penalty: None,
         };
 
-        let tokens = count_request_tokens(&request);
+        let tokens = count_input_tokens(&request);
         // "Hello, how are you?" is approximately 6 tokens
         // Plus role ("user" = 1 token) and message overhead (3 tokens)
         // Plus assistant reply priming (3 tokens)
@@ -123,7 +123,7 @@ mod tests {
             presence_penalty: None,
         };
 
-        let tokens = count_request_tokens(&request);
+        let tokens = count_input_tokens(&request);
         // Should count tokens from both messages plus overhead
         assert!(tokens > 10);
         assert!(tokens < 50);
@@ -146,7 +146,7 @@ mod tests {
             presence_penalty: None,
         };
 
-        let tokens = count_request_tokens(&request);
+        let tokens = count_input_tokens(&request);
         // Should still count role token and overhead
         assert!(tokens > 0);
     }

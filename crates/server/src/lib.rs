@@ -5,7 +5,7 @@
 #![deny(missing_docs)]
 
 mod auth;
-mod client_identification;
+mod client_id;
 mod cors;
 mod csrf;
 mod health;
@@ -19,7 +19,7 @@ use anyhow::anyhow;
 use auth::AuthLayer;
 use axum::{Router, routing::get};
 use axum_server::tls_rustls::RustlsConfig;
-use client_identification::ClientIdentificationLayer;
+use client_id::ClientIdentificationLayer;
 use config::Config;
 use rate_limit::RateLimitLayer;
 use std::sync::Arc;

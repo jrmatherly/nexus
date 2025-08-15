@@ -1,5 +1,6 @@
 //! Storage backends for rate limiting.
 
+use std::net::IpAddr;
 use std::time::Duration;
 
 pub mod memory;
@@ -16,21 +17,47 @@ pub struct RateLimitResult {
     pub retry_after: Option<Duration>,
 }
 
+/// Context for token rate limiting to help with cache key generation.
+#[derive(Debug, Clone)]
+pub struct TokenRateLimitContext<'a> {
+    /// Client identifier.
+    pub client_id: &'a str,
+    /// Group identifier (optional).
+    pub group: Option<&'a str>,
+    /// Provider name (e.g., "openai", "anthropic").
+    pub provider: &'a str,
+    /// Model name (e.g., "gpt-4", "claude-3").
+    pub model: Option<&'a str>,
+}
+
+/// Context for general rate limiting to help with cache key generation.
+#[derive(Debug, Clone)]
+pub enum RateLimitContext<'a> {
+    /// Global rate limit (applies to all requests).
+    Global,
+    /// Per-IP rate limit.
+    PerIp { ip: IpAddr },
+    /// Per-MCP server rate limit.
+    PerServer { server: &'a str },
+    /// Per-MCP tool rate limit within a server.
+    PerTool { server: &'a str, tool: &'a str },
+}
+
 /// Trait for rate limit storage backends.
 #[allow(async_fn_in_trait)]
 pub trait RateLimitStorage: Send + Sync {
-    /// Check and potentially consume a token for the given key.
+    /// Check and potentially consume a token for general rate limiting.
     async fn check_and_consume(
         &self,
-        key: &str,
+        context: &RateLimitContext<'_>,
         limit: u32,
         interval: Duration,
     ) -> Result<RateLimitResult, StorageError>;
 
-    /// Check and potentially consume multiple tokens for the given key.
+    /// Check and potentially consume multiple tokens for token rate limiting.
     async fn check_and_consume_tokens(
         &self,
-        key: &str,
+        context: &TokenRateLimitContext<'_>,
         tokens: u32,
         limit: u32,
         interval: Duration,
