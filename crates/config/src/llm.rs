@@ -65,31 +65,22 @@ pub enum ProviderType {
     Anthropic,
     /// Google provider.
     Google,
+    /// AWS Bedrock provider.
+    Bedrock,
 }
 
-/// Unified LLM provider configuration.
+/// Configuration specific to API-based providers.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LlmProviderConfig {
-    /// The type of provider.
-    #[serde(rename = "type")]
-    pub provider_type: ProviderType,
-
-    /// API key for the provider (supports environment variable interpolation).
-    /// This key is used as a fallback when token forwarding is enabled and no user key is provided.
-    /// When token forwarding is disabled, this is the primary API key.
+pub struct ApiProviderConfig {
+    /// API key for authentication.
     #[serde(default)]
     pub api_key: Option<SecretString>,
 
-    /// Custom base URL for the provider.
-    /// Each provider has its own default if not specified:
-    /// - OpenAI: https://api.openai.com/v1
-    /// - Anthropic: https://api.anthropic.com/v1
-    /// - Google: https://generativelanguage.googleapis.com/v1beta
+    /// Custom base URL for the provider API.
     #[serde(default)]
     pub base_url: Option<String>,
 
-    /// Enable token forwarding - allows users to provide their own API keys via headers.
+    /// Enable token forwarding from user requests.
     #[serde(default)]
     pub forward_token: bool,
 
@@ -101,6 +92,116 @@ pub struct LlmProviderConfig {
     /// Provider-level rate limits.
     #[serde(default)]
     pub rate_limits: Option<TokenRateLimitsConfig>,
+}
+
+/// Configuration specific to AWS Bedrock.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BedrockProviderConfig {
+    /// AWS Access Key ID (optional - uses credential chain if not provided).
+    #[serde(default)]
+    pub access_key_id: Option<SecretString>,
+
+    /// AWS Secret Access Key (required if access_key_id is provided).
+    #[serde(default)]
+    pub secret_access_key: Option<SecretString>,
+
+    /// AWS Session Token (optional - for temporary credentials).
+    #[serde(default)]
+    pub session_token: Option<SecretString>,
+
+    /// AWS Profile name (optional - uses default profile if not specified).
+    #[serde(default)]
+    pub profile: Option<String>,
+
+    /// AWS region (required for Bedrock).
+    pub region: String,
+
+    /// Custom endpoint URL (optional - for VPC endpoints).
+    #[serde(default)]
+    pub base_url: Option<String>,
+
+    /// Explicitly configured models for this provider.
+    #[serde(deserialize_with = "deserialize_non_empty_models_with_default")]
+    pub models: BTreeMap<String, ModelConfig>,
+}
+
+/// Complete LLM provider configuration.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum LlmProviderConfig {
+    /// OpenAI provider configuration.
+    Openai(ApiProviderConfig),
+
+    /// Anthropic provider configuration.
+    Anthropic(ApiProviderConfig),
+
+    /// Google provider configuration.
+    Google(ApiProviderConfig),
+
+    /// AWS Bedrock provider configuration.
+    Bedrock(BedrockProviderConfig),
+}
+
+impl LlmProviderConfig {
+    /// Get the provider type for this configuration.
+    pub fn provider_type(&self) -> ProviderType {
+        match self {
+            Self::Openai(_) => ProviderType::Openai,
+            Self::Anthropic(_) => ProviderType::Anthropic,
+            Self::Google(_) => ProviderType::Google,
+            Self::Bedrock(_) => ProviderType::Bedrock,
+        }
+    }
+
+    /// Get the API key (only available for API-based providers).
+    pub fn api_key(&self) -> Option<&SecretString> {
+        match self {
+            Self::Openai(config) => config.api_key.as_ref(),
+            Self::Anthropic(config) => config.api_key.as_ref(),
+            Self::Google(config) => config.api_key.as_ref(),
+            Self::Bedrock(_) => None, // Bedrock doesn't use API keys
+        }
+    }
+
+    /// Get the base URL (if applicable for this provider type).
+    pub fn base_url(&self) -> Option<&str> {
+        match self {
+            Self::Openai(config) => config.base_url.as_deref(),
+            Self::Anthropic(config) => config.base_url.as_deref(),
+            Self::Google(config) => config.base_url.as_deref(),
+            Self::Bedrock(config) => config.base_url.as_deref(),
+        }
+    }
+
+    /// Check if token forwarding is enabled (only applicable for API-based providers).
+    pub fn forward_token(&self) -> bool {
+        match self {
+            Self::Openai(config) => config.forward_token,
+            Self::Anthropic(config) => config.forward_token,
+            Self::Google(config) => config.forward_token,
+            Self::Bedrock(_) => false, // Bedrock doesn't support token forwarding
+        }
+    }
+
+    /// Get the configured models for this provider.
+    pub fn models(&self) -> &BTreeMap<String, ModelConfig> {
+        match self {
+            Self::Openai(config) => &config.models,
+            Self::Anthropic(config) => &config.models,
+            Self::Google(config) => &config.models,
+            Self::Bedrock(config) => &config.models,
+        }
+    }
+
+    /// Get the rate limits for this provider (only available for API-based providers).
+    pub fn rate_limits(&self) -> Option<&TokenRateLimitsConfig> {
+        match self {
+            Self::Openai(config) => config.rate_limits.as_ref(),
+            Self::Anthropic(config) => config.rate_limits.as_ref(),
+            Self::Google(config) => config.rate_limits.as_ref(),
+            Self::Bedrock(_) => None, // Bedrock doesn't support rate limits yet
+        }
+    }
 }
 
 /// Custom deserializer that ensures at least one model is configured.
@@ -166,25 +267,26 @@ mod tests {
             enabled: true,
             path: "/llm",
             providers: {
-                "openai": LlmProviderConfig {
-                    provider_type: Openai,
-                    api_key: Some(
-                        SecretBox<str>([REDACTED]),
-                    ),
-                    base_url: None,
-                    forward_token: false,
-                    models: {
-                        "gpt-3-5-turbo": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
+                "openai": Openai(
+                    ApiProviderConfig {
+                        api_key: Some(
+                            SecretBox<str>([REDACTED]),
+                        ),
+                        base_url: None,
+                        forward_token: false,
+                        models: {
+                            "gpt-3-5-turbo": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
+                            "gpt-4": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
                         },
-                        "gpt-4": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
-                        },
+                        rate_limits: None,
                     },
-                    rate_limits: None,
-                },
+                ),
             },
         }
         "#);
@@ -212,25 +314,26 @@ mod tests {
             enabled: true,
             path: "/llm",
             providers: {
-                "anthropic": LlmProviderConfig {
-                    provider_type: Anthropic,
-                    api_key: Some(
-                        SecretBox<str>([REDACTED]),
-                    ),
-                    base_url: None,
-                    forward_token: false,
-                    models: {
-                        "claude-3-opus": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
+                "anthropic": Anthropic(
+                    ApiProviderConfig {
+                        api_key: Some(
+                            SecretBox<str>([REDACTED]),
+                        ),
+                        base_url: None,
+                        forward_token: false,
+                        models: {
+                            "claude-3-opus": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
+                            "claude-3-sonnet": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
                         },
-                        "claude-3-sonnet": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
-                        },
+                        rate_limits: None,
                     },
-                    rate_limits: None,
-                },
+                ),
             },
         }
         "#);
@@ -255,25 +358,26 @@ mod tests {
             enabled: true,
             path: "/llm",
             providers: {
-                "google": LlmProviderConfig {
-                    provider_type: Google,
-                    api_key: Some(
-                        SecretBox<str>([REDACTED]),
-                    ),
-                    base_url: None,
-                    forward_token: false,
-                    models: {
-                        "gemini-pro": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
+                "google": Google(
+                    ApiProviderConfig {
+                        api_key: Some(
+                            SecretBox<str>([REDACTED]),
+                        ),
+                        base_url: None,
+                        forward_token: false,
+                        models: {
+                            "gemini-pro": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
+                            "gemini-pro-vision": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
                         },
-                        "gemini-pro-vision": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
-                        },
+                        rate_limits: None,
                     },
-                    rate_limits: None,
-                },
+                ),
             },
         }
         "#);
@@ -311,51 +415,54 @@ mod tests {
             enabled: true,
             path: "/ai",
             providers: {
-                "anthropic": LlmProviderConfig {
-                    provider_type: Anthropic,
-                    api_key: Some(
-                        SecretBox<str>([REDACTED]),
-                    ),
-                    base_url: None,
-                    forward_token: false,
-                    models: {
-                        "claude-3-opus": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
+                "anthropic": Anthropic(
+                    ApiProviderConfig {
+                        api_key: Some(
+                            SecretBox<str>([REDACTED]),
+                        ),
+                        base_url: None,
+                        forward_token: false,
+                        models: {
+                            "claude-3-opus": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
                         },
+                        rate_limits: None,
                     },
-                    rate_limits: None,
-                },
-                "google": LlmProviderConfig {
-                    provider_type: Google,
-                    api_key: Some(
-                        SecretBox<str>([REDACTED]),
-                    ),
-                    base_url: None,
-                    forward_token: false,
-                    models: {
-                        "gemini-pro": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
+                ),
+                "google": Google(
+                    ApiProviderConfig {
+                        api_key: Some(
+                            SecretBox<str>([REDACTED]),
+                        ),
+                        base_url: None,
+                        forward_token: false,
+                        models: {
+                            "gemini-pro": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
                         },
+                        rate_limits: None,
                     },
-                    rate_limits: None,
-                },
-                "openai": LlmProviderConfig {
-                    provider_type: Openai,
-                    api_key: Some(
-                        SecretBox<str>([REDACTED]),
-                    ),
-                    base_url: None,
-                    forward_token: false,
-                    models: {
-                        "gpt-4": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
+                ),
+                "openai": Openai(
+                    ApiProviderConfig {
+                        api_key: Some(
+                            SecretBox<str>([REDACTED]),
+                        ),
+                        base_url: None,
+                        forward_token: false,
+                        models: {
+                            "gpt-4": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
                         },
+                        rate_limits: None,
                     },
-                    rate_limits: None,
-                },
+                ),
             },
         }
         "#);
@@ -427,21 +534,22 @@ mod tests {
             enabled: true,
             path: "/llm",
             providers: {
-                "openai": LlmProviderConfig {
-                    provider_type: Openai,
-                    api_key: Some(
-                        SecretBox<str>([REDACTED]),
-                    ),
-                    base_url: None,
-                    forward_token: false,
-                    models: {
-                        "gpt-4": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
+                "openai": Openai(
+                    ApiProviderConfig {
+                        api_key: Some(
+                            SecretBox<str>([REDACTED]),
+                        ),
+                        base_url: None,
+                        forward_token: false,
+                        models: {
+                            "gpt-4": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
                         },
+                        rate_limits: None,
                     },
-                    rate_limits: None,
-                },
+                ),
             },
         }
         "#);
@@ -468,29 +576,30 @@ mod tests {
             enabled: true,
             path: "/llm",
             providers: {
-                "openai": LlmProviderConfig {
-                    provider_type: Openai,
-                    api_key: Some(
-                        SecretBox<str>([REDACTED]),
-                    ),
-                    base_url: None,
-                    forward_token: false,
-                    models: {
-                        "gpt-3-5": ModelConfig {
-                            rename: Some(
-                                "gpt-3.5-turbo",
-                            ),
-                            rate_limits: None,
+                "openai": Openai(
+                    ApiProviderConfig {
+                        api_key: Some(
+                            SecretBox<str>([REDACTED]),
+                        ),
+                        base_url: None,
+                        forward_token: false,
+                        models: {
+                            "gpt-3-5": ModelConfig {
+                                rename: Some(
+                                    "gpt-3.5-turbo",
+                                ),
+                                rate_limits: None,
+                            },
+                            "gpt-4": ModelConfig {
+                                rename: Some(
+                                    "gpt-4-turbo-preview",
+                                ),
+                                rate_limits: None,
+                            },
                         },
-                        "gpt-4": ModelConfig {
-                            rename: Some(
-                                "gpt-4-turbo-preview",
-                            ),
-                            rate_limits: None,
-                        },
+                        rate_limits: None,
                     },
-                    rate_limits: None,
-                },
+                ),
             },
         }
         "#);
@@ -517,25 +626,26 @@ mod tests {
             enabled: true,
             path: "/llm",
             providers: {
-                "openai": LlmProviderConfig {
-                    provider_type: Openai,
-                    api_key: Some(
-                        SecretBox<str>([REDACTED]),
-                    ),
-                    base_url: None,
-                    forward_token: false,
-                    models: {
-                        "custom-model": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
+                "openai": Openai(
+                    ApiProviderConfig {
+                        api_key: Some(
+                            SecretBox<str>([REDACTED]),
+                        ),
+                        base_url: None,
+                        forward_token: false,
+                        models: {
+                            "custom-model": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
+                            "gpt-4": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
                         },
-                        "gpt-4": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
-                        },
+                        rate_limits: None,
                     },
-                    rate_limits: None,
-                },
+                ),
             },
         }
         "#);
@@ -569,44 +679,46 @@ mod tests {
             enabled: true,
             path: "/llm",
             providers: {
-                "anthropic": LlmProviderConfig {
-                    provider_type: Anthropic,
-                    api_key: Some(
-                        SecretBox<str>([REDACTED]),
-                    ),
-                    base_url: None,
-                    forward_token: false,
-                    models: {
-                        "claude-3": ModelConfig {
-                            rename: Some(
-                                "claude-3-opus-20240229",
-                            ),
-                            rate_limits: None,
+                "anthropic": Anthropic(
+                    ApiProviderConfig {
+                        api_key: Some(
+                            SecretBox<str>([REDACTED]),
+                        ),
+                        base_url: None,
+                        forward_token: false,
+                        models: {
+                            "claude-3": ModelConfig {
+                                rename: Some(
+                                    "claude-3-opus-20240229",
+                                ),
+                                rate_limits: None,
+                            },
+                            "claude-instant": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
                         },
-                        "claude-instant": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
-                        },
+                        rate_limits: None,
                     },
-                    rate_limits: None,
-                },
-                "openai": LlmProviderConfig {
-                    provider_type: Openai,
-                    api_key: Some(
-                        SecretBox<str>([REDACTED]),
-                    ),
-                    base_url: None,
-                    forward_token: false,
-                    models: {
-                        "gpt-4": ModelConfig {
-                            rename: Some(
-                                "gpt-4-turbo",
-                            ),
-                            rate_limits: None,
+                ),
+                "openai": Openai(
+                    ApiProviderConfig {
+                        api_key: Some(
+                            SecretBox<str>([REDACTED]),
+                        ),
+                        base_url: None,
+                        forward_token: false,
+                        models: {
+                            "gpt-4": ModelConfig {
+                                rename: Some(
+                                    "gpt-4-turbo",
+                                ),
+                                rate_limits: None,
+                            },
                         },
+                        rate_limits: None,
                     },
-                    rate_limits: None,
-                },
+                ),
             },
         }
         "#);
@@ -632,7 +744,7 @@ mod tests {
 
         let config: LlmConfig = toml::from_str(config).unwrap();
 
-        assert_debug_snapshot!(&config.providers["openai"].rate_limits, @r#"
+        assert_debug_snapshot!(&config.providers["openai"].rate_limits(), @r#"
         Some(
             TokenRateLimitsConfig {
                 per_user: Some(
@@ -674,7 +786,7 @@ mod tests {
 
         let config: LlmConfig = toml::from_str(config).unwrap();
 
-        assert_debug_snapshot!(&config.providers["openai"].models["gpt-4"].rate_limits, @r#"
+        assert_debug_snapshot!(&config.providers["openai"].models()["gpt-4"].rate_limits, @r#"
         Some(
             TokenRateLimitsConfig {
                 per_user: Some(
@@ -730,49 +842,52 @@ mod tests {
             enabled: true,
             path: "/llm",
             providers: {
-                "anthropic": LlmProviderConfig {
-                    provider_type: Anthropic,
-                    api_key: None,
-                    base_url: None,
-                    forward_token: true,
-                    models: {
-                        "claude-3-opus": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
+                "anthropic": Anthropic(
+                    ApiProviderConfig {
+                        api_key: None,
+                        base_url: None,
+                        forward_token: true,
+                        models: {
+                            "claude-3-opus": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
                         },
+                        rate_limits: None,
                     },
-                    rate_limits: None,
-                },
-                "google": LlmProviderConfig {
-                    provider_type: Google,
-                    api_key: Some(
-                        SecretBox<str>([REDACTED]),
-                    ),
-                    base_url: None,
-                    forward_token: false,
-                    models: {
-                        "gemini-pro": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
+                ),
+                "google": Google(
+                    ApiProviderConfig {
+                        api_key: Some(
+                            SecretBox<str>([REDACTED]),
+                        ),
+                        base_url: None,
+                        forward_token: false,
+                        models: {
+                            "gemini-pro": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
                         },
+                        rate_limits: None,
                     },
-                    rate_limits: None,
-                },
-                "openai": LlmProviderConfig {
-                    provider_type: Openai,
-                    api_key: Some(
-                        SecretBox<str>([REDACTED]),
-                    ),
-                    base_url: None,
-                    forward_token: true,
-                    models: {
-                        "gpt-4": ModelConfig {
-                            rename: None,
-                            rate_limits: None,
+                ),
+                "openai": Openai(
+                    ApiProviderConfig {
+                        api_key: Some(
+                            SecretBox<str>([REDACTED]),
+                        ),
+                        base_url: None,
+                        forward_token: true,
+                        models: {
+                            "gpt-4": ModelConfig {
+                                rename: None,
+                                rate_limits: None,
+                            },
                         },
+                        rate_limits: None,
                     },
-                    rate_limits: None,
-                },
+                ),
             },
         }
         "#);

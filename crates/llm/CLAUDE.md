@@ -838,6 +838,198 @@ When updating providers:
 5. Review error handling - ensure proper status codes
 6. Update this CLAUDE.md file if necessary
 
+## AWS Bedrock Provider Architecture
+
+### Family-Based Organization
+
+The AWS Bedrock provider uses a unique architecture to handle multiple model families through a single AWS service. Unlike other providers that connect to a single vendor API, Bedrock aggregates models from various vendors (Anthropic, Amazon, Meta, Cohere, etc.), each with different request/response formats.
+
+### Directory Structure
+
+```
+crates/llm/src/provider/bedrock/
+├── mod.rs                    # Main Bedrock provider implementation
+├── families.rs               # Family detection and routing logic
+└── families/
+    ├── mod.rs               # Family trait and common types
+    ├── anthropic/           # Anthropic Claude models
+    │   ├── mod.rs
+    │   ├── input.rs         # Anthropic-specific request format
+    │   └── output.rs        # Anthropic-specific response format
+    ├── amazon/              # Amazon Titan and Nova models
+    │   ├── mod.rs
+    │   ├── titan/           # Titan family
+    │   │   ├── mod.rs
+    │   │   ├── input.rs
+    │   │   └── output.rs
+    │   └── nova/            # Nova family
+    │       ├── mod.rs
+    │       ├── input.rs
+    │       └── output.rs
+    ├── meta/                # Meta Llama models
+    │   ├── mod.rs
+    │   ├── input.rs
+    │   └── output.rs
+    ├── cohere/              # Cohere Command models
+    │   ├── mod.rs
+    │   ├── input.rs
+    │   └── output.rs
+    └── mistral/             # Mistral AI models
+        ├── mod.rs
+        ├── input.rs
+        └── output.rs
+```
+
+### The Family Trait
+
+Each model family implements the `BedrockFamily` trait:
+
+```rust
+#[async_trait]
+pub(crate) trait BedrockFamily: Send + Sync {
+    /// Convert unified request to family-specific format
+    fn prepare_request(&self, request: ChatCompletionRequest) -> anyhow::Result<PreparedRequest>;
+    
+    /// Parse family-specific response to unified format
+    fn parse_response(&self, response: &[u8]) -> anyhow::Result<ChatCompletionResponse>;
+    
+    /// Parse streaming chunks (if supported)
+    fn parse_stream_chunk<'a>(&self, chunk: &'a [u8]) -> anyhow::Result<Option<BedrockStreamChunk<'a>>>;
+    
+    /// Check if this family supports the given model
+    fn supports_model(&self, model_id: &str) -> bool;
+    
+    /// Get the family name for logging
+    fn name(&self) -> &str;
+}
+```
+
+### Model ID Detection
+
+The `families.rs` module contains the logic to detect which family handles a given model:
+
+```rust
+pub(super) fn detect_family(model_id: &str) -> anyhow::Result<Box<dyn BedrockFamily>> {
+    if model_id.starts_with("anthropic.") {
+        Ok(Box::new(AnthropicFamily))
+    } else if model_id.starts_with("amazon.titan") {
+        Ok(Box::new(TitanFamily))
+    } else if model_id.starts_with("amazon.nova") {
+        Ok(Box::new(NovaFamily))
+    } else if model_id.starts_with("meta.") {
+        Ok(Box::new(MetaFamily))
+    } else if model_id.starts_with("cohere.") {
+        Ok(Box::new(CohereFamily))
+    } else if model_id.starts_with("mistral.") {
+        Ok(Box::new(MistralFamily))
+    } else {
+        Err(anyhow!("Unsupported model family: {}", model_id))
+    }
+}
+```
+
+### Request/Response Flow
+
+1. **Request arrives** with model ID like `anthropic.claude-3-5-sonnet-20241022-v2:0`
+2. **Family detection** routes to `AnthropicFamily`
+3. **Request conversion**: `ChatCompletionRequest` → `AnthropicRequest`
+4. **AWS SDK call** with family-specific JSON body
+5. **Response parsing**: Family-specific format → `ChatCompletionResponse`
+6. **Streaming handling**: Each family parses its own SSE format
+
+### Adding a New Bedrock Model Family
+
+When AWS adds support for a new model provider:
+
+1. **Create family module** in `families/new_provider/`
+2. **Define input/output types** matching the provider's API format
+3. **Implement BedrockFamily trait**
+4. **Add detection logic** in `families.rs`
+5. **Add tests** for request/response conversion
+
+Example for a hypothetical new provider:
+
+```rust
+// families/new_provider/mod.rs
+pub(crate) struct NewProviderFamily;
+
+#[async_trait]
+impl BedrockFamily for NewProviderFamily {
+    fn supports_model(&self, model_id: &str) -> bool {
+        model_id.starts_with("newprovider.")
+    }
+    
+    fn prepare_request(&self, request: ChatCompletionRequest) -> anyhow::Result<PreparedRequest> {
+        let provider_request = NewProviderRequest::from(request);
+        let body = sonic_rs::to_vec(&provider_request)?;
+        Ok(PreparedRequest { body })
+    }
+    
+    // ... other trait methods
+}
+```
+
+### Streaming Considerations
+
+Each family has different streaming formats:
+
+- **Anthropic**: Uses message events (`message_start`, `content_block_delta`, etc.)
+- **Nova**: Uses typed events (`messageStart`, `contentBlockDelta`, `metadata`)
+- **Cohere**: Uses generations with incremental text
+- **Meta/Llama**: Uses generation events with incremental tokens
+
+The family implementation must:
+1. Parse the provider's SSE format
+2. Extract incremental content
+3. Convert to unified `ChatCompletionChunk` format
+4. Handle finish reasons and usage statistics
+
+### Testing Bedrock Families
+
+Each family should have:
+
+1. **Unit tests** for request/response conversion in `output.rs`
+2. **Integration tests** with mock Bedrock responses
+3. **Live tests** (marked with `#[ignore]`) that require AWS credentials
+
+Example test structure:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_request_conversion() {
+        let request = ChatCompletionRequest { /* ... */ };
+        let family = NewProviderFamily;
+        let prepared = family.prepare_request(request).unwrap();
+        
+        // Verify JSON structure
+        let json: serde_json::Value = sonic_rs::from_slice(&prepared.body).unwrap();
+        assert_eq!(json["model"], "newprovider.model-v1");
+    }
+    
+    #[test]
+    fn test_response_parsing() {
+        let response_json = r#"{ /* provider response */ }"#;
+        let family = NewProviderFamily;
+        let response = family.parse_response(response_json.as_bytes()).unwrap();
+        
+        // Verify conversion
+        assert_eq!(response.choices[0].message.content, "Expected content");
+    }
+}
+```
+
+### Key Differences from Other Providers
+
+1. **Multi-vendor**: Single provider handles multiple vendor APIs
+2. **AWS SDK**: Uses AWS request signing instead of API keys
+3. **Regional**: Models available vary by AWS region
+4. **Family routing**: Dynamic dispatch based on model ID prefix
+5. **Diverse formats**: Each family has completely different JSON schemas
+
 ## Common Pitfalls
 
 1. **Never expose internal errors**: Always use `InternalError(None)` for Nexus errors
@@ -846,3 +1038,4 @@ When updating providers:
 4. **Test error scenarios**: Don't just test happy paths
 5. **Include usage in final chunk**: The last streaming chunk should contain usage statistics
 6. **Escape SSE data**: Ensure newlines in content are properly escaped in SSE format
+7. **For Bedrock**: Remember each family has different streaming formats and error responses

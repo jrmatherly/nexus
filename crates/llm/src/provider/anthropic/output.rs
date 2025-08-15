@@ -11,7 +11,7 @@ use crate::messages::{
 ///
 /// Used to distinguish between different content blocks in the response.
 #[derive(Debug, Deserialize, PartialEq)]
-pub(super) enum ContentType {
+pub enum ContentType {
     /// Plain text content.
     #[serde(rename = "text")]
     Text,
@@ -34,7 +34,7 @@ pub(super) enum ContentType {
 ///
 /// Provides insight into why the generation ended.
 #[derive(Debug, Deserialize, PartialEq)]
-pub(super) enum StopReason {
+pub enum StopReason {
     /// The model reached a natural stopping point.
     /// This is the most common stop reason for conversational responses.
     #[serde(rename = "end_turn")]
@@ -62,7 +62,7 @@ pub(super) enum StopReason {
 
 /// The type of response from the Anthropic API.
 #[derive(Debug, Deserialize, PartialEq)]
-pub(super) enum ResponseType {
+pub enum ResponseType {
     /// A standard message response.
     #[serde(rename = "message")]
     Message,
@@ -77,7 +77,7 @@ pub(super) enum ResponseType {
 /// This struct represents the response format from creating messages with Claude
 /// as documented in the [Anthropic API Reference](https://docs.anthropic.com/en/api/messages).
 #[derive(Debug, Deserialize)]
-pub(super) struct AnthropicResponse {
+pub struct AnthropicResponse {
     /// Unique identifier for the message.
     pub id: String,
 
@@ -113,7 +113,7 @@ pub(super) struct AnthropicResponse {
 ///
 /// Represents a single piece of content which could be text, tool use, etc.
 #[derive(Debug, Deserialize)]
-pub(super) struct AnthropicContent {
+pub struct AnthropicContent {
     /// The type of this content block.
     pub r#type: ContentType,
 
@@ -131,7 +131,7 @@ pub(super) struct AnthropicContent {
 ///
 /// Used for tracking consumption and billing.
 #[derive(Debug, Deserialize, Clone, Copy)]
-pub(super) struct AnthropicUsage {
+pub struct AnthropicUsage {
     /// Number of tokens in the input prompt.
     /// This includes the system prompt, messages, and any other input.
     /// In streaming message_delta events, this field may be omitted.

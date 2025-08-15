@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use config::{LlmProviderConfig, ModelConfig};
+use config::ModelConfig;
 
 use crate::messages::{Model, ObjectType};
 
@@ -16,10 +16,10 @@ pub(crate) struct ModelManager {
 }
 
 impl ModelManager {
-    /// Create a new ModelManager from provider configuration.
-    pub fn new(config: &LlmProviderConfig, owner: impl Into<String>) -> Self {
+    /// Create a new ModelManager from model configuration.
+    pub fn new(models: BTreeMap<String, ModelConfig>, owner: impl Into<String>) -> Self {
         Self {
-            models: config.models.clone(),
+            models,
             owner: owner.into(),
         }
     }
@@ -59,16 +59,8 @@ mod tests {
 
     #[test]
     fn empty_config_rejects_all_models() {
-        let config = LlmProviderConfig {
-            provider_type: config::ProviderType::Openai,
-            api_key: None,
-            base_url: None,
-            forward_token: false,
-            models: BTreeMap::new(),
-            rate_limits: None,
-        };
-
-        let manager = ModelManager::new(&config, "test");
+        let models = BTreeMap::new();
+        let manager = ModelManager::new(models, "test");
 
         // Phase 3: No models configured means all models are rejected
         assert_eq!(manager.resolve_model("gpt-4"), None);
@@ -86,16 +78,7 @@ mod tests {
             },
         );
 
-        let config = LlmProviderConfig {
-            provider_type: config::ProviderType::Openai,
-            api_key: None,
-            base_url: None,
-            forward_token: false,
-            models,
-            rate_limits: None,
-        };
-
-        let manager = ModelManager::new(&config, "test");
+        let manager = ModelManager::new(models, "test");
 
         assert_eq!(manager.resolve_model("gpt-4"), Some("gpt-4".to_string()));
         assert_eq!(manager.resolve_model("gpt-3.5"), None);
@@ -112,16 +95,7 @@ mod tests {
             },
         );
 
-        let config = LlmProviderConfig {
-            provider_type: config::ProviderType::Anthropic,
-            api_key: None,
-            base_url: None,
-            forward_token: false,
-            models,
-            rate_limits: None,
-        };
-
-        let manager = ModelManager::new(&config, "anthropic");
+        let manager = ModelManager::new(models, "anthropic");
 
         assert_eq!(
             manager.resolve_model("claude"),
@@ -148,16 +122,7 @@ mod tests {
             },
         );
 
-        let config = LlmProviderConfig {
-            provider_type: config::ProviderType::Openai,
-            api_key: None,
-            base_url: None,
-            forward_token: false,
-            models,
-            rate_limits: None,
-        };
-
-        let manager = ModelManager::new(&config, "openai");
+        let manager = ModelManager::new(models, "openai");
         let model_list = manager.get_configured_models();
 
         assert_eq!(model_list.len(), 2);

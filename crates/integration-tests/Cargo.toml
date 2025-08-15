@@ -20,6 +20,7 @@ futures.workspace = true
 futures-util.workspace = true
 indoc.workspace = true
 insta.workspace = true
+integration-test-macros = { path = "../integration-test-macros" }
 itertools.workspace = true
 log.workspace = true
 logforth = { workspace = true, features = ["colored"] }

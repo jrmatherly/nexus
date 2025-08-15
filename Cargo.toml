@@ -12,7 +12,13 @@ repository = "https://github.com/grafbase/nexus"
 [workspace.dependencies]
 anyhow = "1.0.98"
 ascii = "1.1.0"
+async-stream = "0.3"
 async-trait = "0.1.83"
+aws-config = { version = "1.5", features = ["behavior-version-latest"] }
+aws-credential-types = "1.2"
+aws-sdk-bedrockruntime = { version = "1.72", features = ["behavior-version-latest"] }
+aws-smithy-runtime-api = "1.7"
+aws-smithy-types = "1.2"
 axum = { version = "0.8.4", features = ["macros"] }
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 base64 = "0.22.1"
@@ -44,6 +50,8 @@ log = "0.4.27"
 logforth = "0.27.0"
 mcp = { version = "0.1.0", path = "crates/mcp" }
 mini-moka = "0.10"
+proc-macro2 = "1.0"
+quote = "1.0"
 rate-limit = { version = "0.1.0", path = "crates/rate-limit" }
 redis = { version = "0.32.0", features = ["tokio-rustls-comp", "connection-manager"] }
 regex = "1.11.1"
@@ -64,6 +72,7 @@ serde_json = "1.0"
 server = { path = "crates/server" }
 sha2 = "0.10"
 sonic-rs = "0.5.3"
+syn = { version = "2.0", default-features = false }
 tantivy = "0.24.2"
 temp-env = "0.3.6"
 tempfile = "3.14.0"
