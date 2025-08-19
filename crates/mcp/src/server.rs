@@ -308,7 +308,7 @@ impl ServerHandler for McpServer {
                     let response = search::SearchResponse { results: tools };
 
                     Ok(CallToolResult {
-                        content: None,
+                        content: Vec::new(),
                         structured_content: Some(serde_json::to_value(response).unwrap()),
                         is_error: None,
                     })
@@ -321,7 +321,7 @@ impl ServerHandler for McpServer {
                     }
 
                     Ok(CallToolResult {
-                        content: Some(content),
+                        content,
                         structured_content: None,
                         is_error: None,
                     })

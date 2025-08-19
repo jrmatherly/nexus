@@ -111,8 +111,7 @@ async fn redis_per_server_rate_limiting() {
             .await;
         let text = response
             .content
-            .as_ref()
-            .and_then(|c| c.first())
+            .first()
             .and_then(|c| c.raw.as_text())
             .map(|t| t.text.as_str())
             .unwrap_or("");
@@ -132,8 +131,7 @@ async fn redis_per_server_rate_limiting() {
         .await;
     let text = response
         .content
-        .as_ref()
-        .and_then(|c| c.first())
+        .first()
         .and_then(|c| c.raw.as_text())
         .map(|t| t.text.as_str())
         .unwrap_or("");
