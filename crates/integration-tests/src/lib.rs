@@ -206,9 +206,10 @@ impl McpTestClient {
             }
             // Fallback to treating it as an array directly for backward compatibility
             structured.as_array().cloned().unwrap_or_default()
-        } else if let Some(content) = result.content {
+        } else if !result.content.is_empty() {
             // Fallback to parsing from content field (legacy behavior)
-            content
+            result
+                .content
                 .into_iter()
                 .filter_map(|content| match content.raw.as_text() {
                     Some(content) => serde_json::from_str(&content.text).ok(),
