@@ -181,7 +181,7 @@ fn validate_provider_groups(
     provider: &LlmProviderConfig,
 ) -> anyhow::Result<()> {
     // Check provider-level group rate limits
-    if let Some(rate_limits) = &provider.rate_limits
+    if let Some(rate_limits) = &provider.rate_limits()
         && let Some(per_user) = &rate_limits.per_user
     {
         for group_name in per_user.groups.keys() {
@@ -194,7 +194,7 @@ fn validate_provider_groups(
     }
 
     // Check model-level group rate limits
-    for (model_name, model) in &provider.models {
+    for (model_name, model) in provider.models() {
         let Some(rate_limits) = &model.rate_limits else {
             continue;
         };
@@ -219,12 +219,12 @@ fn validate_provider_groups(
 fn check_if_any_llm_rate_limits_exist(config: &Config) -> bool {
     for provider in config.llm.providers.values() {
         // Check if provider has any rate limits
-        if provider.rate_limits.is_some() {
+        if provider.rate_limits().is_some() {
             return true;
         }
 
         // Check if provider has group-specific rate limits
-        if let Some(limits) = &provider.rate_limits
+        if let Some(limits) = provider.rate_limits()
             && let Some(per_user) = &limits.per_user
             && !per_user.groups.is_empty()
         {
@@ -232,7 +232,7 @@ fn check_if_any_llm_rate_limits_exist(config: &Config) -> bool {
         }
 
         // Check if any model has rate limits
-        for model in provider.models.values() {
+        for model in provider.models().values() {
             if model.rate_limits.is_some() {
                 return true;
             }
@@ -254,7 +254,7 @@ fn check_if_any_llm_rate_limits_exist(config: &Config) -> bool {
 fn check_if_any_group_rate_limits_exist(config: &Config) -> bool {
     for provider in config.llm.providers.values() {
         // Check provider-level group rate limits
-        if let Some(limits) = &provider.rate_limits
+        if let Some(limits) = provider.rate_limits()
             && let Some(per_user) = &limits.per_user
             && !per_user.groups.is_empty()
         {
@@ -262,7 +262,7 @@ fn check_if_any_group_rate_limits_exist(config: &Config) -> bool {
         }
 
         // Check model-level group rate limits
-        for model in provider.models.values() {
+        for model in provider.models().values() {
             if let Some(limits) = &model.rate_limits
                 && let Some(per_user) = &limits.per_user
                 && !per_user.groups.is_empty()
@@ -277,7 +277,7 @@ fn check_if_any_group_rate_limits_exist(config: &Config) -> bool {
 
 fn check_group_fallbacks(group: &str, provider_name: &str, provider: &LlmProviderConfig, warnings: &mut Vec<String>) {
     // Check each model's fallback situation
-    for (model_name, model) in &provider.models {
+    for (model_name, model) in provider.models() {
         // Check if this model has a specific rate limit for this group
         let has_model_group = model_has_group_limit(model, group);
 
@@ -288,7 +288,7 @@ fn check_group_fallbacks(group: &str, provider_name: &str, provider: &LlmProvide
         // Model doesn't have a group-specific limit, check fallbacks
         let has_model_default = model.rate_limits.is_some();
         let has_provider_group = provider_has_group_limit(provider, group);
-        let has_provider_default = provider.rate_limits.is_some();
+        let has_provider_default = provider.rate_limits().is_some();
 
         let warning = match (has_model_default, has_provider_group, has_provider_default) {
             (true, _, _) => {
@@ -314,7 +314,7 @@ fn check_group_fallbacks(group: &str, provider_name: &str, provider: &LlmProvide
     let has_provider_limit = provider_has_group_limit(provider, group);
     let has_any_model_limit = provider_has_any_model_with_group_limit(provider, group);
 
-    if !has_provider_limit && !has_any_model_limit && provider.rate_limits.is_none() {
+    if !has_provider_limit && !has_any_model_limit && provider.rate_limits().is_none() {
         let warning = format!("Group '{group}' has no rate limits configured for provider '{provider_name}'");
         warnings.push(warning);
     }
@@ -333,7 +333,7 @@ fn model_has_group_limit(model: &crate::ModelConfig, group: &str) -> bool {
 /// Check if a provider has a rate limit for a specific group.
 fn provider_has_group_limit(provider: &LlmProviderConfig, group: &str) -> bool {
     provider
-        .rate_limits
+        .rate_limits()
         .as_ref()
         .and_then(|limits| limits.per_user.as_ref())
         .map(|per_user| per_user.groups.contains_key(group))
@@ -343,7 +343,7 @@ fn provider_has_group_limit(provider: &LlmProviderConfig, group: &str) -> bool {
 /// Check if any model in a provider has a rate limit for a specific group.
 fn provider_has_any_model_with_group_limit(provider: &LlmProviderConfig, group: &str) -> bool {
     provider
-        .models
+        .models()
         .values()
         .any(|model| model_has_group_limit(model, group))
 }

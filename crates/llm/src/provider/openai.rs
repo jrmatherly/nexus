@@ -3,7 +3,7 @@ mod output;
 
 use async_trait::async_trait;
 use axum::http::HeaderMap;
-use config::LlmProviderConfig;
+use config::ApiProviderConfig;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use reqwest::{Client, header::AUTHORIZATION};
@@ -27,12 +27,12 @@ pub(crate) struct OpenAIProvider {
     client: Client,
     base_url: String,
     name: String,
-    config: LlmProviderConfig,
+    config: ApiProviderConfig,
     model_manager: ModelManager,
 }
 
 impl OpenAIProvider {
-    pub fn new(name: String, config: LlmProviderConfig) -> crate::Result<Self> {
+    pub fn new(name: String, config: ApiProviderConfig) -> crate::Result<Self> {
         let headers = HeaderMap::new();
 
         let client = Client::builder()
@@ -50,7 +50,7 @@ impl OpenAIProvider {
             .clone()
             .unwrap_or_else(|| DEFAULT_OPENAI_API_URL.to_string());
 
-        let model_manager = ModelManager::new(&config, "openai");
+        let model_manager = ModelManager::new(config.models.clone(), "openai");
 
         Ok(Self {
             client,
@@ -85,7 +85,8 @@ impl Provider for OpenAIProvider {
         openai_request.stream = false; // Always false for now
 
         let mut request_builder = self.client.post(&url);
-        let key = token::get(self.config.forward_token, &self.config.api_key, context)?;
+        let temp_api_key = self.config.api_key.clone();
+        let key = token::get(self.config.forward_token, &temp_api_key, context)?;
         request_builder = request_builder.header(AUTHORIZATION, format!("Bearer {}", key.expose_secret()));
 
         let response = request_builder
@@ -155,7 +156,8 @@ impl Provider for OpenAIProvider {
         openai_request.model = actual_model;
         openai_request.stream = true;
 
-        let key = token::get(self.config.forward_token, &self.config.api_key, context)?;
+        let temp_api_key = self.config.api_key.clone();
+        let key = token::get(self.config.forward_token, &temp_api_key, context)?;
 
         // Build request with dynamic authorization header
         let response = self

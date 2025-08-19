@@ -7,7 +7,7 @@ use crate::messages::{ChatCompletionRequest, ChatMessage, ChatRole};
 /// This struct represents the request format for creating messages with Claude models
 /// as documented in the [Anthropic API Reference](https://docs.anthropic.com/en/api/messages).
 #[derive(Debug, Serialize)]
-pub(super) struct AnthropicRequest {
+pub struct AnthropicRequest {
     /// The model that will complete your prompt.
     /// See [models](https://docs.anthropic.com/en/docs/models-overview) for additional details.
     /// Examples: "claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-3-haiku-20240307"
@@ -82,7 +82,7 @@ pub(super) struct AnthropicRequest {
 ///
 /// Messages must alternate between user and assistant roles.
 #[derive(Debug, Serialize)]
-pub(super) struct AnthropicMessage {
+pub struct AnthropicMessage {
     /// The role of the message sender.
     /// Must be either "user" or "assistant".
     pub role: ChatRole,

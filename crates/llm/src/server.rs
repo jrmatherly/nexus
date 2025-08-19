@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use config::{LlmConfig, ProviderType, StorageConfig};
+use config::{LlmConfig, StorageConfig};
 use futures::stream::StreamExt;
 use itertools::Itertools;
 use rate_limit::{TokenRateLimitManager, TokenRateLimitRequest};
@@ -9,7 +9,8 @@ use crate::{
     error::LlmError,
     messages::{ChatCompletionRequest, ChatCompletionResponse, Model, ModelsResponse, ObjectType},
     provider::{
-        ChatCompletionStream, Provider, anthropic::AnthropicProvider, google::GoogleProvider, openai::OpenAIProvider,
+        ChatCompletionStream, Provider, anthropic::AnthropicProvider, bedrock::BedrockProvider, google::GoogleProvider,
+        openai::OpenAIProvider,
     },
     request::RequestContext,
 };
@@ -33,20 +34,22 @@ impl LlmServer {
         for (name, provider_config) in config.providers.clone().into_iter() {
             log::debug!("Initializing provider: {name}");
 
-            match provider_config.provider_type {
-                ProviderType::Openai => {
-                    let provider = Box::new(OpenAIProvider::new(name.clone(), provider_config)?);
-                    providers.push(provider as Box<dyn Provider>)
+            let provider: Box<dyn Provider> = match provider_config {
+                config::LlmProviderConfig::Openai(api_config) => {
+                    Box::new(OpenAIProvider::new(name.clone(), api_config)?)
                 }
-                ProviderType::Anthropic => {
-                    let provider = Box::new(AnthropicProvider::new(name.clone(), provider_config)?);
-                    providers.push(provider as Box<dyn Provider>)
+                config::LlmProviderConfig::Anthropic(api_config) => {
+                    Box::new(AnthropicProvider::new(name.clone(), api_config)?)
                 }
-                ProviderType::Google => {
-                    let provider = Box::new(GoogleProvider::new(name.clone(), provider_config)?);
-                    providers.push(provider as Box<dyn Provider>)
+                config::LlmProviderConfig::Google(api_config) => {
+                    Box::new(GoogleProvider::new(name.clone(), api_config)?)
                 }
-            }
+                config::LlmProviderConfig::Bedrock(bedrock_config) => {
+                    Box::new(BedrockProvider::new(name.clone(), bedrock_config).await?)
+                }
+            };
+
+            providers.push(provider);
         }
 
         // Check if any providers were successfully initialized
@@ -62,7 +65,7 @@ impl LlmServer {
         let has_token_rate_limits = config
             .providers
             .values()
-            .any(|p| p.rate_limits.is_some() || p.models.values().any(|m| m.rate_limits.is_some()));
+            .any(|p| p.rate_limits().is_some() || p.models().values().any(|m| m.rate_limits.is_some()));
 
         let token_rate_limiter = if has_token_rate_limits {
             Some(TokenRateLimitManager::new(storage_config).await.map_err(|e| {
@@ -132,7 +135,7 @@ impl LlmServer {
         let provider_config = self.shared.config.providers.get(provider_name)?;
 
         // Get model config if it exists
-        let model_config = provider_config.models.get(model_name);
+        let model_config = provider_config.models().get(model_name);
 
         // Check rate limit if token rate limiter is configured
         let Some(ref token_rate_limiter) = self.shared.token_rate_limiter else {
@@ -145,7 +148,7 @@ impl LlmServer {
 
         // Gather provider and model rate limit configurations
         let (provider_limits, model_limits) = (
-            provider_config.rate_limits.as_ref(),
+            provider_config.rate_limits(),
             model_config.and_then(|m| m.rate_limits.as_ref()),
         );
 

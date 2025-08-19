@@ -8,7 +8,7 @@ use thiserror::Error;
 
 /// LLM service errors with appropriate HTTP status codes.
 #[derive(Debug, Error)]
-pub(crate) enum LlmError {
+pub enum LlmError {
     /// Invalid model format or missing provider/model in request.
     #[error("Invalid model format: expected 'provider/model', got '{0}'")]
     InvalidModelFormat(String),

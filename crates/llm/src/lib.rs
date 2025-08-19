@@ -13,15 +13,15 @@ use messages::ChatCompletionRequest;
 
 mod error;
 mod messages;
-mod provider;
+pub mod provider;
 mod request;
 mod server;
 pub mod token_counter;
 
-use error::LlmError;
+pub use error::LlmError;
 use server::LlmServer;
 
-pub(crate) type Result<T> = std::result::Result<T, LlmError>;
+pub type Result<T> = std::result::Result<T, LlmError>;
 
 /// Creates an axum router for LLM endpoints.
 pub async fn router(config: LlmConfig, storage_config: &config::StorageConfig) -> anyhow::Result<Router> {

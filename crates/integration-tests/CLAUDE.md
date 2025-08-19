@@ -157,36 +157,69 @@ impl TestServerBuilder {
 - Manages service lifecycles and cleanup
 - Merges service configurations with base config
 
-### 3. ALWAYS Use Inline Snapshots
+### 3. ALWAYS Use Insta Snapshots for Object/JSON Assertions
 
-**MANDATORY**: Every test must use insta inline snapshots for assertions:
+**MANDATORY**: Use insta snapshots for ALL structured data assertions (JSON responses, complex objects, multi-field comparisons). Regular assertions are ONLY allowed for simple boolean checks or status codes.
+
+#### When to Use Insta Snapshots (REQUIRED):
+- JSON response bodies
+- Complex objects with multiple fields  
+- Arrays or collections of data
+- Any structured output
+- Error response formats
+
+#### When Regular Assertions Are Acceptable:
+- HTTP status codes: `assert_eq!(response.status(), 200)`
+- Simple boolean checks: `assert!(content.contains("hello"))`
+- Single primitive values when testing specific behavior
 
 ```rust
-// CORRECT: Always use inline snapshots
+// CORRECT: Use insta for JSON responses
 #[tokio::test]
-async fn health_endpoint_returns_json() {
-    let config = indoc! {r#"
-        [server.health]
-        enabled = true
-
-        [mcp]
-        enabled = true
-    "#};
-
-    let server = TestServer::builder().build(config).await;
-    let response = server.client.get("/health").await;
-
+async fn test_llm_response() {
+    let response = llm.simple_completion("gpt-4", "Hello").await;
+    
+    // OK: Simple status check
     assert_eq!(response.status(), 200);
-
-    let body = response.text().await.unwrap();
-    insta::assert_snapshot!(body, @r#"{"status":"healthy"}"#);
+    
+    // REQUIRED: Use insta for JSON body
+    insta::assert_json_snapshot!(response, {
+        ".id" => "[id]",
+        ".created" => "[timestamp]"
+    }, @r#"
+    {
+      "id": "[id]",
+      "object": "chat.completion",
+      "created": "[timestamp]",
+      "model": "gpt-4",
+      "choices": [{
+        "message": {
+          "role": "assistant",
+          "content": "Hello! How can I help you?"
+        }
+      }]
+    }
+    "#);
 }
+
+// WRONG: Never use assert_eq for JSON or complex objects
+assert_eq!(response["choices"][0]["message"]["content"], "Hello!");
+assert_eq!(body, r#"{"status":"healthy"}"#);
+
+// CORRECT: For simple contains checks in live tests
+let content = response["choices"][0]["message"]["content"].as_str().unwrap();
+assert!(
+    content.contains("hello") || content.contains("Hi"),
+    "Expected greeting in response, got: {}", content
+);
 ```
 
-```rust
-// WRONG: Never use manual assertions for response bodies
-assert_eq!(body, r#"{"status":"healthy"}"#);
-```
+#### Benefits of Insta Snapshots:
+- **Automatic updates**: `cargo insta approve` updates all snapshots at once
+- **Clear diffs**: Shows exactly what changed in the output
+- **Redaction**: Hide dynamic values with `".field" => "[redacted]"`
+- **Maintainability**: Easy to review changes in pull requests
+- **Consistency**: All tests follow the same pattern
 
 ## Test Structure
 
@@ -579,6 +612,211 @@ cargo nextest run -p integration-tests stdio_basic_echo_tool
 # Approve snapshot changes
 cargo insta approve
 ```
+
+### Important: Live Provider Tests
+
+**Always ask for user permission before running live provider tests** (e.g., `bedrock_live` tests). These tests:
+- Make real API calls to cloud providers (AWS Bedrock, OpenAI, etc.)
+- Incur actual costs (typically < $0.01 per test run)
+- Require valid credentials
+- Are marked with `#[ignore]` and use the `live_provider_test` macro
+- Must be run with explicit environment variables
+
+Before running these tests, inform the user:
+- Which provider will be tested
+- Estimated cost (e.g., "This will cost approximately $0.01")
+- Required credentials (e.g., "Requires AWS_PROFILE or AWS credentials")
+
+Example commands (only run after user confirms):
+```bash
+# For AWS Bedrock tests (requires AWS credentials)
+BEDROCK_LIVE_TESTS=true cargo test -p integration-tests bedrock_live -- --ignored
+
+# For OpenAI tests (if implemented, requires OPENAI_API_KEY)
+OPENAI_LIVE_TESTS=true cargo test -p integration-tests openai_live -- --ignored
+```
+
+These tests exist for manual verification and are not part of the regular test suite.
+
+### AWS Bedrock Live Testing
+
+The AWS Bedrock live tests are located in `tests/llm/bedrock/live.rs` and require special setup. These tests use the `live_provider_test` macro from `integration_test_macros` for automatic test management.
+
+#### Prerequisites
+
+1. **AWS Credentials**: Configure AWS credentials using one of:
+   - Environment variables: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+   - AWS Profile: Set `AWS_PROFILE` environment variable
+   - IAM Role: When running on AWS infrastructure
+   - AWS SSO: Use `aws sso login --profile your-profile` then set `AWS_PROFILE`
+
+2. **Enable Bedrock Models**: In AWS Console, enable access to the models you want to test:
+   - **Anthropic**: `claude-instant-v1`, `claude-3-sonnet`, `claude-3-haiku`
+   - **Amazon Nova**: `nova-micro-v1:0`
+   - **Amazon Titan**: `titan-text-lite-v1`, `titan-text-express-v1`
+   - **Meta**: `llama3-8b-instruct-v1:0`
+   - **Mistral**: `mistral-7b-instruct-v0:2`
+   - **Cohere**: `command-r-v1:0`
+   - **DeepSeek**: `us.deepseek.r1-v1:0`
+
+3. **Set Region**: Configure AWS region (defaults to `us-east-1`):
+   ```bash
+   export AWS_REGION=us-west-2  # or your preferred region
+   ```
+
+#### Running Bedrock Live Tests
+
+```bash
+# Set required environment variables once
+export BEDROCK_LIVE_TESTS=true
+export AWS_PROFILE=your-profile  # or use AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+
+# Now you can run tests without repeating the environment variable
+
+# Run all Bedrock live tests
+cargo test -p integration-tests bedrock::live -- --ignored --nocapture
+
+# Run specific model family tests
+cargo test -p integration-tests live_bedrock_anthropic -- --ignored
+cargo test -p integration-tests live_bedrock_amazon_nova -- --ignored
+cargo test -p integration-tests live_bedrock_amazon_titan -- --ignored
+cargo test -p integration-tests live_bedrock_meta_llama -- --ignored
+cargo test -p integration-tests live_bedrock_mistral -- --ignored
+cargo test -p integration-tests live_bedrock_cohere -- --ignored
+cargo test -p integration-tests live_bedrock_deepseek -- --ignored
+
+# Run streaming tests only
+cargo test -p integration-tests streaming_ -- --ignored
+
+# Run with debug logging to see request/response details
+RUST_LOG=debug cargo test -p integration-tests bedrock::live -- --ignored --nocapture
+```
+
+#### Test Structure
+
+Tests use the `live_provider_test` macro which automatically:
+- Adds `#[tokio::test]` and `#[ignore]` attributes
+- Checks for `BEDROCK_LIVE_TESTS=true` environment variable
+- Prefixes test name with `live_bedrock_`
+- Logs when test is skipped or running
+
+```rust
+use integration_test_macros::live_provider_test;
+
+#[live_provider_test(bedrock)]
+async fn anthropic_claude_instant_minimal() {
+    // This test becomes: live_bedrock_anthropic_claude_instant_minimal
+    // Only runs when BEDROCK_LIVE_TESTS=true
+    
+    let config = create_bedrock_config(&[("claude-instant", "anthropic.claude-instant-v1")]);
+    let server = TestServer::builder().build(&config).await;
+    let llm = server.llm_client("/llm");
+    
+    let response = llm.completions(json!({
+        "model": "bedrock/claude-instant",
+        "messages": [{"role": "user", "content": "Say yes"}],
+        "max_tokens": 10,
+        "temperature": 0
+    })).await;
+    
+    // Test assertions...
+}
+```
+
+#### Helper Functions
+
+The test module includes a helper function for creating Bedrock configurations:
+
+```rust
+fn create_bedrock_config(models: &[(&str, &str)]) -> String {
+    // Creates a config with:
+    // - Region from AWS_REGION env var (defaults to us-east-1)
+    // - Model aliases with max_tokens=10 to minimize costs
+    // - Proper TOML formatting
+}
+```
+
+#### Test Coverage
+
+The live tests cover:
+
+| Model Family | Test Models | Test Types |
+|-------------|------------|------------|
+| **Anthropic** | `claude-instant-v1`, `claude-3-sonnet`, `claude-3-haiku` | Basic completion, Streaming |
+| **Amazon Nova** | `nova-micro-v1:0` | Basic completion, Streaming |
+| **Amazon Titan** | `titan-text-lite-v1`, `titan-text-express-v1` | Basic completion, Streaming |
+| **Meta** | `llama3-8b-instruct-v1:0` | Basic completion |
+| **Mistral** | `mistral-7b-instruct-v0:2` | Basic completion |
+| **Cohere** | `command-r-v1:0` | Basic, Multi-turn, System messages, Streaming |
+| **DeepSeek** | `us.deepseek.r1-v1:0` | Basic, System messages, Streaming |
+| **Error Handling** | Invalid models, Missing fields | Error responses |
+
+#### Cost Considerations
+
+**WARNING**: Running these tests incurs AWS charges. All tests are configured with:
+- `max_tokens: 10-50` - Limits response length
+- Minimal prompts (< 10 tokens) - Reduces input costs
+- Temperature: 0 - For deterministic outputs
+- Cheapest models per family when possible
+
+Typical test costs (approximate):
+- Single completion test: < $0.001
+- Full test suite run: < $0.01
+- Streaming tests: Similar cost to non-streaming
+
+#### Debugging Failed Tests
+
+1. **Check Model Access**: Ensure the model is enabled in your AWS account
+2. **Verify Region**: Some models are only available in specific regions
+3. **Check Quotas**: AWS Bedrock has request and token quotas
+4. **Enable Debug Logging**: Use `RUST_LOG=debug` to see detailed requests/responses
+5. **Test with AWS CLI**: Verify access works outside of Nexus:
+   ```bash
+   aws bedrock-runtime invoke-model \
+     --model-id anthropic.claude-instant-v1 \
+     --body '{"messages":[{"role":"user","content":"Hi"}],"max_tokens":10}' \
+     --region us-east-1 \
+     output.json
+   ```
+
+#### Adding New Bedrock Model Tests
+
+When AWS adds new models to Bedrock:
+
+1. **Add test to `tests/llm/bedrock/live.rs`** in the appropriate section
+2. **Use the `live_provider_test` macro** for consistency
+3. **Test both streaming and non-streaming** if supported
+4. **Use minimal prompts and max_tokens** to reduce costs
+5. **Use insta snapshots** for response validation
+
+Example:
+```rust
+#[live_provider_test(bedrock)]
+async fn new_provider_model_minimal() {
+    let config = create_bedrock_config(&[
+        ("model-alias", "provider.actual-model-id-v1:0")
+    ]);
+    
+    let server = TestServer::builder().build(&config).await;
+    let llm = server.llm_client("/llm");
+    
+    let response = llm.completions(json!({
+        "model": "bedrock/model-alias",
+        "messages": [{"role": "user", "content": "Reply: ok"}],
+        "max_tokens": 10,
+        "temperature": 0
+    })).await;
+    
+    insta::assert_json_snapshot!(response, {
+        ".id" => "[id]",
+        ".created" => "[timestamp]",
+        ".choices[0].message.content" => "[response]",
+        ".usage" => "[usage]"
+    });
+}
+```
+
+For complete documentation on the AWS Bedrock test setup, including AWS CLI configuration and CI/CD considerations, see `BEDROCK_LIVE_TESTS.md`.
 
 ## Debugging Tips
 

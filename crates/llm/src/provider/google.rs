@@ -2,7 +2,7 @@ mod input;
 mod output;
 
 use async_trait::async_trait;
-use config::LlmProviderConfig;
+use config::ApiProviderConfig;
 use reqwest::Client;
 use secrecy::ExposeSecret;
 
@@ -27,12 +27,12 @@ pub(crate) struct GoogleProvider {
     client: Client,
     base_url: String,
     name: String,
-    config: LlmProviderConfig,
+    config: ApiProviderConfig,
     model_manager: ModelManager,
 }
 
 impl GoogleProvider {
-    pub fn new(name: String, config: LlmProviderConfig) -> crate::Result<Self> {
+    pub fn new(name: String, config: ApiProviderConfig) -> crate::Result<Self> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()
@@ -46,7 +46,7 @@ impl GoogleProvider {
             .clone()
             .unwrap_or_else(|| DEFAULT_GOOGLE_API_URL.to_string());
 
-        let model_manager = ModelManager::new(&config, "google");
+        let model_manager = ModelManager::new(config.models.clone(), "google");
 
         Ok(Self {
             client,
@@ -73,7 +73,8 @@ impl Provider for GoogleProvider {
             .resolve_model(&model_name)
             .ok_or_else(|| LlmError::ModelNotFound(format!("Model '{}' is not configured", model_name)))?;
 
-        let api_key = token::get(self.config.forward_token, &self.config.api_key, context)?;
+        let temp_api_key = self.config.api_key.clone();
+        let api_key = token::get(self.config.forward_token, &temp_api_key, context)?;
 
         let url = format!(
             "{}/models/{actual_model}:generateContent?key={}",
@@ -158,7 +159,8 @@ impl Provider for GoogleProvider {
             .resolve_model(&model_name)
             .ok_or_else(|| LlmError::ModelNotFound(format!("Model '{}' is not configured", model_name)))?;
 
-        let api_key = token::get(self.config.forward_token, &self.config.api_key, context)?;
+        let temp_api_key = self.config.api_key.clone();
+        let api_key = token::get(self.config.forward_token, &temp_api_key, context)?;
 
         let url = format!(
             "{}/models/{actual_model}:streamGenerateContent?alt=sse&key={}",

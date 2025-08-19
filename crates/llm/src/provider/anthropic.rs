@@ -1,9 +1,9 @@
-mod input;
-mod output;
+pub(super) mod input;
+pub(super) mod output;
 
 use async_trait::async_trait;
 use axum::http::HeaderMap;
-use config::LlmProviderConfig;
+use config::ApiProviderConfig;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use reqwest::Client;
@@ -28,12 +28,12 @@ pub(crate) struct AnthropicProvider {
     client: Client,
     base_url: String,
     name: String,
-    config: LlmProviderConfig,
+    config: ApiProviderConfig,
     model_manager: ModelManager,
 }
 
 impl AnthropicProvider {
-    pub fn new(name: String, config: LlmProviderConfig) -> crate::Result<Self> {
+    pub fn new(name: String, config: ApiProviderConfig) -> crate::Result<Self> {
         let mut headers = HeaderMap::new();
 
         headers.insert(
@@ -66,7 +66,7 @@ impl AnthropicProvider {
             .clone()
             .unwrap_or_else(|| DEFAULT_ANTHROPIC_API_URL.to_string());
 
-        let model_manager = ModelManager::new(&config, "anthropic");
+        let model_manager = ModelManager::new(config.models.clone(), "anthropic");
 
         Ok(Self {
             client,
@@ -86,7 +86,8 @@ impl Provider for AnthropicProvider {
         context: &RequestContext,
     ) -> crate::Result<ChatCompletionResponse> {
         let url = format!("{}/messages", self.base_url);
-        let api_key = token::get(self.config.forward_token, &self.config.api_key, context)?;
+        let temp_api_key = self.config.api_key.clone();
+        let api_key = token::get(self.config.forward_token, &temp_api_key, context)?;
 
         let original_model = request.model.clone();
 
@@ -166,7 +167,8 @@ impl Provider for AnthropicProvider {
             .ok_or_else(|| LlmError::ModelNotFound(format!("Model '{}' is not configured", request.model)))?;
 
         request.model = actual_model;
-        let api_key = token::get(self.config.forward_token, &self.config.api_key, context)?;
+        let temp_api_key = self.config.api_key.clone();
+        let api_key = token::get(self.config.forward_token, &temp_api_key, context)?;
 
         let mut anthropic_request = AnthropicRequest::from(request);
         anthropic_request.stream = Some(true);

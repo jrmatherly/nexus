@@ -474,11 +474,12 @@ path = "/llm"   # LLM endpoint path (default: "/llm")
 
 #### Supported Providers
 
-Nexus currently supports three major LLM providers:
+Nexus currently supports four major LLM providers:
 
 1. **OpenAI** (including OpenAI-compatible APIs)
 2. **Anthropic** (Claude models)
 3. **Google** (Gemini models)
+4. **AWS Bedrock** (Multiple model families via AWS)
 
 #### Provider Configuration
 
@@ -532,6 +533,64 @@ base_url = "https://generativelanguage.googleapis.com/v1beta"  # Default
 
 [llm.providers.google.models.gemini-pro]
 ```
+
+##### AWS Bedrock Provider
+
+```toml
+[llm.providers.bedrock]
+type = "bedrock"
+# Optional: AWS profile to use (defaults to environment settings)
+profile = "{{ env.AWS_PROFILE }}"
+# Optional: AWS region (defaults to environment or us-east-1)
+region = "us-west-2"
+
+# Model Configuration (REQUIRED - at least one model must be configured)
+# Bedrock uses model IDs with dots, so they must be quoted
+[llm.providers.bedrock.models."anthropic.claude-3-5-sonnet-20241022-v2:0"]
+
+[llm.providers.bedrock.models."anthropic.claude-3-opus-20240229-v1:0"]
+
+[llm.providers.bedrock.models."amazon.nova-micro-v1:0"]
+
+[llm.providers.bedrock.models."meta.llama3-8b-instruct-v1:0"]
+
+[llm.providers.bedrock.models."ai21.jamba-1.5-mini-v1:0"]
+
+# Rename models for simpler access
+[llm.providers.bedrock.models.claude-haiku]
+rename = "anthropic.claude-3-5-haiku-20241022-v1:0"  # Users will access as "bedrock/claude-haiku"
+
+[llm.providers.bedrock.models.jamba-mini]
+rename = "ai21.jamba-1.5-mini-v1:0"  # Users will access as "bedrock/jamba-mini"
+```
+
+AWS Bedrock provides access to multiple foundation models through a single API. Key features:
+- **Unified Access**: Use models from Anthropic, Amazon, Meta, Cohere, and more through one interface
+- **AWS Integration**: Leverages AWS credentials and IAM for authentication
+- **Regional Availability**: Models may vary by AWS region
+- **Native Streaming**: Full streaming support for all compatible models
+
+**Authentication**: Bedrock uses standard AWS credential chain:
+1. Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
+2. AWS profile (specified in config or via `AWS_PROFILE` environment variable)
+3. IAM role (when running on EC2/ECS/Lambda)
+4. AWS SSO credentials
+
+**Supported Model Families**:
+- **AI21 Jamba**: Jamba 1.5 Mini and Large models with 256K context window
+- **Anthropic Claude**: All Claude 3 models (Opus, Sonnet, Haiku) and Claude Instant
+- **Amazon Nova**: Nova Micro, Lite, Pro models
+- **Amazon Titan**: Titan Text and Embeddings models
+- **Meta Llama**: Llama 2 and Llama 3 models
+- **Cohere Command**: Command and Command R models
+- **DeepSeek**: DeepSeek R1 reasoning models
+- **Mistral**: Mistral 7B and Mixtral models
+
+**Model ID Format**: Bedrock model IDs follow the pattern `provider.model-name-version:revision`, for example:
+- `ai21.jamba-1.5-mini-v1:0`
+- `anthropic.claude-3-5-sonnet-20241022-v2:0`
+- `amazon.nova-micro-v1:0`
+- `meta.llama3-8b-instruct-v1:0`
 
 #### Model Configuration
 
@@ -691,6 +750,9 @@ curl -X POST http://localhost:8000/llm/v1/chat/completions \
 - **No Logging**: User-provided keys are never logged
 - **HTTPS Recommended**: Always use HTTPS in production to protect API keys in transit
 
+##### Provider Limitations
+- **AWS Bedrock**: Token forwarding is **not supported** for Bedrock providers. Bedrock uses AWS IAM credentials and request signing, which cannot be provided via simple API key headers. You must configure AWS credentials at the provider level (via environment variables, AWS profile, or explicit credentials in configuration).
+
 #### Using the LLM API
 
 Once configured, you can interact with LLM providers through Nexus's unified API:
@@ -804,6 +866,14 @@ Streaming is supported for all providers (OpenAI, Anthropic, Google) and provide
 - Supports Gemini models
 - Returns appropriate safety ratings when available
 - Supports streaming responses with Server-Sent Events (SSE)
+
+##### AWS Bedrock
+- Automatically detects and routes to appropriate model family (Anthropic, Amazon, Meta, etc.)
+- Each model family has its own request/response format, handled transparently
+- Uses AWS SDK for authentication and request signing
+- Supports all Bedrock features including streaming and model-specific parameters
+- Regional endpoint selection based on configuration or AWS defaults
+- Model availability varies by AWS region
 
 #### Using Nexus with LLM SDKs
 
