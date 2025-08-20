@@ -108,7 +108,7 @@ pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyho
             protected_router = protected_router.layer(layer);
         }
         _ => {
-            log::warn!("Client identification is disabled");
+            log::debug!("Client identification is disabled");
         }
     }
 
@@ -197,7 +197,7 @@ pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyho
             }
 
             if llm_actually_exposed {
-                log::info!("AI endpoint available at: http://{listen_address}{}", config.llm.path);
+                log::info!("LLM endpoint available at: http://{listen_address}{}", config.llm.path);
             }
 
             axum::serve(listener, app)
