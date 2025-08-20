@@ -4,8 +4,35 @@ use serde::{Deserialize, Serialize};
 
 use crate::messages::{
     ChatChoice, ChatChoiceDelta, ChatCompletionChunk, ChatCompletionResponse, ChatMessage, ChatMessageDelta, ChatRole,
-    ObjectType, Usage,
+    FunctionCall, FunctionStart, ObjectType, StreamingToolCall, ToolCall, Usage,
 };
+
+/// Role in Google's conversation model.
+///
+/// Google uses different role names than OpenAI:
+/// - "user" for human input (includes system messages)
+/// - "model" for AI responses (instead of "assistant")
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum GoogleRole {
+    /// User role - for human input and system instructions
+    User,
+    /// Model role - for AI responses (Google's term for "assistant")
+    Model,
+    /// Any other role not yet known (for forward compatibility)
+    #[serde(untagged)]
+    Other(String),
+}
+
+impl From<ChatRole> for GoogleRole {
+    fn from(role: ChatRole) -> Self {
+        match role {
+            ChatRole::User | ChatRole::System | ChatRole::Tool => GoogleRole::User,
+            ChatRole::Assistant => GoogleRole::Model,
+            ChatRole::Other(s) => GoogleRole::Other(s),
+        }
+    }
+}
 
 /// Reason why the model stopped generating tokens.
 ///
@@ -51,19 +78,33 @@ pub(super) struct GoogleContent {
     /// - "user": Input provided by the user
     /// - "model": Response from the model
     /// - For system instructions, use "user" role
-    pub(super) role: String,
+    pub(super) role: GoogleRole,
 }
 
 /// A single part of content.
 ///
-/// Represents an atomic piece of content, such as text or an image.
-/// Currently only text is supported in this implementation.
+/// Represents an atomic piece of content, such as text, images, or function calls.
+/// Google's API supports different part types through a tagged union.
 #[derive(Debug, Deserialize, Serialize)]
 pub(super) struct GooglePart {
     /// Text content of this part.
     ///
-    /// Will be `None` for non-text content types (e.g., images, which are not yet supported).
+    /// Will be `None` for non-text content types (e.g., function calls).
     pub(super) text: Option<String>,
+
+    /// Function call made by the model.
+    ///
+    /// Present when the model decides to invoke a tool/function.
+    /// Contains the function name and arguments.
+    #[serde(rename = "functionCall")]
+    pub(super) function_call: Option<GoogleFunctionCall>,
+
+    /// Function response/result.
+    ///
+    /// Used to provide the result of a function call back to the model.
+    /// This is sent in subsequent messages after executing a function.
+    #[serde(rename = "functionResponse")]
+    pub(super) function_response: Option<GoogleFunctionResponse>,
 }
 
 /// Response from Google Gemini GenerateContent API.
@@ -146,10 +187,54 @@ pub(super) struct GoogleUsageMetadata {
     pub(super) prompt_token_count: i32,
 
     /// Number of tokens in the generated response (output).
+    /// May be absent in streaming responses where only total is provided.
+    #[serde(default)]
     pub(super) candidates_token_count: i32,
 
     /// Total number of tokens (prompt + candidates).
     pub(super) total_token_count: i32,
+}
+
+/// Function call made by the model.
+///
+/// Represents a request to invoke a specific function with given arguments.
+/// Google's format for function calls in responses.
+#[derive(Debug, Deserialize, Serialize)]
+pub(super) struct GoogleFunctionCall {
+    /// Name of the function to call.
+    pub(super) name: String,
+
+    /// Arguments to pass to the function as a JSON object.
+    pub(super) args: serde_json::Value,
+}
+
+/// Response/result from a function call.
+///
+/// Used to provide the result of a function execution back to the model.
+/// This is sent in user messages after executing a function call.
+#[derive(Debug, Deserialize, Serialize)]
+pub(super) struct GoogleFunctionResponse {
+    /// Name of the function that was called.
+    pub(super) name: String,
+
+    /// Result of the function execution as a JSON object.
+    pub(super) response: serde_json::Value,
+}
+
+impl From<FinishReason> for crate::messages::FinishReason {
+    fn from(reason: FinishReason) -> Self {
+        match reason {
+            FinishReason::Stop => crate::messages::FinishReason::Stop,
+            FinishReason::MaxTokens => crate::messages::FinishReason::Length,
+            FinishReason::Safety => crate::messages::FinishReason::ContentFilter,
+            FinishReason::Recitation => crate::messages::FinishReason::ContentFilter,
+            FinishReason::Other => crate::messages::FinishReason::Stop,
+            FinishReason::Unknown(s) => {
+                log::warn!("Unknown finish reason from Google: {s}");
+                crate::messages::FinishReason::Other(s)
+            }
+        }
+    }
 }
 
 impl From<GoogleGenerateResponse> for ChatCompletionResponse {
@@ -160,32 +245,44 @@ impl From<GoogleGenerateResponse> for ChatCompletionResponse {
             .next()
             .expect("No candidates in Google response");
 
-        let message_content = candidate
-            .content
-            .parts
-            .iter()
-            .filter_map(|part| part.text.as_ref())
-            .cloned()
-            .collect::<Vec<_>>()
-            .join("");
+        // Extract text content and function calls from parts
+        let mut message_content = String::new();
+        let mut tool_calls = Vec::new();
+        let mut has_function_call = false;
 
-        let finish_reason = candidate.finish_reason.as_ref().map_or_else(
-            || {
-                log::warn!("Google API response missing finish_reason, defaulting to 'stop'");
-                crate::messages::FinishReason::Stop
-            },
-            |reason| match reason {
-                FinishReason::Stop => crate::messages::FinishReason::Stop,
-                FinishReason::MaxTokens => crate::messages::FinishReason::Length,
-                FinishReason::Safety => crate::messages::FinishReason::ContentFilter,
-                FinishReason::Recitation => crate::messages::FinishReason::ContentFilter,
-                FinishReason::Other => crate::messages::FinishReason::Stop,
-                FinishReason::Unknown(s) => {
-                    log::warn!("Unknown finish reason from Google: {s}");
-                    crate::messages::FinishReason::Other(s.clone())
-                }
-            },
-        );
+        for part in &candidate.content.parts {
+            // Handle text content
+            if let Some(text) = &part.text {
+                message_content.push_str(text);
+            }
+
+            // Handle function calls
+            if let Some(function_call) = &part.function_call {
+                has_function_call = true;
+                let tool_call = ToolCall {
+                    id: format!("call_{}", uuid::Uuid::new_v4()),
+                    tool_type: crate::messages::ToolCallType::Function,
+                    function: FunctionCall {
+                        name: function_call.name.clone(),
+                        arguments: function_call.args.to_string(),
+                    },
+                };
+                tool_calls.push(tool_call);
+            }
+        }
+
+        // Determine finish reason based on content
+        let finish_reason = if has_function_call {
+            crate::messages::FinishReason::ToolCalls
+        } else {
+            candidate.finish_reason.map_or_else(
+                || {
+                    log::warn!("Google API response missing finish_reason, defaulting to 'stop'");
+                    crate::messages::FinishReason::Stop
+                },
+                Into::into,
+            )
+        };
 
         Self {
             id: format!("gen-{}", uuid::Uuid::new_v4()),
@@ -199,7 +296,13 @@ impl From<GoogleGenerateResponse> for ChatCompletionResponse {
                 index: candidate.index as u32,
                 message: ChatMessage {
                     role: ChatRole::Assistant,
-                    content: message_content,
+                    content: if message_content.is_empty() && has_function_call {
+                        None
+                    } else {
+                        Some(message_content)
+                    },
+                    tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+                    tool_call_id: None,
                 },
                 finish_reason,
             }],
@@ -237,11 +340,13 @@ impl From<GoogleGenerateResponse> for ChatCompletionResponse {
 /// Each SSE event contains a complete JSON object with candidates array,
 /// where each candidate contains incremental text in the parts array.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct GoogleStreamChunk<'a> {
     /// Array of response candidates.
     ///
     /// Usually contains a single candidate (index 0) unless candidate_count > 1.
     /// Each candidate represents a different possible completion.
+    #[serde(borrow)]
     pub candidates: Vec<GoogleStreamCandidate<'a>>,
 
     /// Model version information.
@@ -269,11 +374,13 @@ pub(super) struct GoogleStreamChunk<'a> {
 /// In streaming mode, each chunk contains partial content that should
 /// be concatenated to build the complete response.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct GoogleStreamCandidate<'a> {
     /// Content with incremental text.
     ///
     /// Contains the role and parts array with text fragments.
     /// Each chunk adds more text to build the complete message.
+    #[serde(borrow)]
     pub content: GoogleStreamContent<'a>,
 
     /// The reason generation stopped for this candidate.
@@ -323,6 +430,8 @@ pub(super) struct GoogleStreamContent<'a> {
     /// In streaming mode, typically contains a single part with a text fragment.
     /// Multiple parts might be present for multi-modal responses (text + code, etc.).
     /// Concatenate all text parts to build the complete response.
+    /// May be absent in final chunks that only contain metadata.
+    #[serde(borrow, default)]
     pub parts: Vec<GoogleStreamPart<'a>>,
 
     /// Role of the content author.
@@ -330,10 +439,11 @@ pub(super) struct GoogleStreamContent<'a> {
     /// Always "model" for AI-generated responses.
     /// Other possible values: "user" (in conversation history)
     #[allow(dead_code)]
+    #[serde(borrow)]
     pub role: Cow<'a, str>,
 }
 
-/// A streaming part with text content.
+/// A streaming part with text content or function calls.
 ///
 /// Represents a fragment of content in Google's streaming response.
 /// Parts are the atomic units of content that get concatenated.
@@ -344,45 +454,91 @@ pub(super) struct GoogleStreamPart<'a> {
     /// Contains a text fragment that should be appended to previous parts.
     /// Can be as small as a single character or as large as multiple sentences.
     /// Empty strings may appear, especially at the start or end of streaming.
-    pub text: Cow<'a, str>,
+    #[serde(borrow)]
+    pub text: Option<Cow<'a, str>>,
+
+    /// Function call made by the model in streaming.
+    ///
+    /// Present when the model decides to invoke a tool/function.
+    /// In streaming mode, this may be built up incrementally.
+    #[serde(rename = "functionCall")]
+    pub function_call: Option<GoogleStreamFunctionCall<'a>>,
+}
+
+/// Streaming function call from Google.
+///
+/// Represents an incremental function call being built up in streaming mode.
+#[derive(Debug, Deserialize)]
+pub(super) struct GoogleStreamFunctionCall<'a> {
+    /// Name of the function to call.
+    #[serde(borrow)]
+    pub name: Cow<'a, str>,
+
+    /// Arguments being built up incrementally as a JSON string.
+    pub args: serde_json::Value,
 }
 
 impl<'a> GoogleStreamChunk<'a> {
     /// Convert Google's streaming format to OpenAI-compatible ChatCompletionChunk.
     ///
     /// Maps Google's candidates/parts structure to OpenAI's simpler delta format.
-    /// Handles finish reasons and usage statistics when present.
+    /// Handles finish reasons, usage statistics, and function calls when present.
     pub(super) fn into_chunk(self, provider_name: &str, model_name: &str) -> ChatCompletionChunk {
         // Google sends one candidate at a time in streaming
         let candidate = self.candidates.first();
 
-        let (content, finish_reason) = if let Some(candidate) = candidate {
-            // Extract text from parts
-            let text = candidate
-                .content
-                .parts
-                .first()
-                .map(|part| part.text.clone().into_owned());
+        let (content, tool_calls, finish_reason) = if let Some(candidate) = candidate {
+            let mut text_content = None;
+            let mut streaming_tool_calls = None;
+
+            // Process parts to extract text and function calls
+            for part in &candidate.content.parts {
+                // Handle text content
+                if let Some(text) = &part.text
+                    && !text.is_empty()
+                {
+                    text_content = Some(text.clone().into_owned());
+                }
+
+                // Handle function calls
+                if let Some(function_call) = &part.function_call {
+                    // Convert to OpenAI-compatible tool call format
+                    // Include even if args is empty (for final chunks with finish_reason)
+                    let tool_call = StreamingToolCall::Start {
+                        index: 0,
+                        id: format!("call_{}", uuid::Uuid::new_v4()),
+                        r#type: crate::messages::ToolCallType::Function,
+                        function: FunctionStart {
+                            name: function_call.name.to_string(),
+                            arguments: function_call.args.to_string(),
+                        },
+                    };
+                    streaming_tool_calls = Some(vec![tool_call]);
+                }
+            }
 
             // Map finish reason
             let finish = candidate.finish_reason.as_ref().map(|reason| match reason.as_ref() {
-                "STOP" => crate::messages::FinishReason::Stop,
+                "STOP" => {
+                    if streaming_tool_calls.is_some() {
+                        crate::messages::FinishReason::ToolCalls
+                    } else {
+                        crate::messages::FinishReason::Stop
+                    }
+                }
                 "MAX_TOKENS" => crate::messages::FinishReason::Length,
                 "SAFETY" | "RECITATION" => crate::messages::FinishReason::ContentFilter,
                 "OTHER" => crate::messages::FinishReason::Stop,
                 other => crate::messages::FinishReason::Other(other.to_string()),
             });
 
-            (text, finish)
+            (text_content, streaming_tool_calls, finish)
         } else {
-            (None, None)
+            (None, None, None)
         };
 
-        // Generate a unique ID for this stream
-        let id = format!("gen-{}", uuid::Uuid::new_v4());
-
         ChatCompletionChunk {
-            id,
+            id: format!("gen-{}", uuid::Uuid::new_v4()),
             object: ObjectType::ChatCompletionChunk,
             created: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -392,23 +548,33 @@ impl<'a> GoogleStreamChunk<'a> {
             choices: vec![ChatChoiceDelta {
                 index: 0,
                 delta: ChatMessageDelta {
-                    role: if content.is_some() {
+                    role: if content.is_some() || tool_calls.is_some() {
                         Some(ChatRole::Assistant)
                     } else {
                         None
                     },
                     content,
-                    tool_calls: None,
+                    tool_calls,
                     function_call: None,
                 },
                 finish_reason,
                 logprobs: None,
             }],
             system_fingerprint: None,
-            usage: self.usage_metadata.map(|metadata| Usage {
-                prompt_tokens: metadata.prompt_token_count as u32,
-                completion_tokens: metadata.candidates_token_count as u32,
-                total_tokens: metadata.total_token_count as u32,
+            usage: self.usage_metadata.map(|metadata| {
+                // In streaming, candidates_token_count might be 0 (missing)
+                // Calculate it from total - prompt if needed
+                let completion_tokens = if metadata.candidates_token_count > 0 {
+                    metadata.candidates_token_count
+                } else {
+                    metadata.total_token_count - metadata.prompt_token_count
+                };
+
+                Usage {
+                    prompt_tokens: metadata.prompt_token_count as u32,
+                    completion_tokens: completion_tokens as u32,
+                    total_tokens: metadata.total_token_count as u32,
+                }
             }),
         }
     }

@@ -64,7 +64,9 @@ fn count_message_tokens(tokenizer: &CoreBPE, message: &ChatMessage) -> usize {
     tokens += tokenizer.encode_ordinary(role_str).len();
 
     // Count content tokens
-    tokens += tokenizer.encode_ordinary(&message.content).len();
+    if let Some(content) = &message.content {
+        tokens += tokenizer.encode_ordinary(content).len();
+    }
 
     tokens
 }
@@ -80,7 +82,9 @@ mod tests {
             model: "gpt-4".to_string(),
             messages: vec![ChatMessage {
                 role: ChatRole::User,
-                content: "Hello, how are you?".to_string(),
+                content: Some("Hello, how are you?".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
             }],
             temperature: None,
             top_p: None,
@@ -89,6 +93,9 @@ mod tests {
             stop: None,
             frequency_penalty: None,
             presence_penalty: None,
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
         };
 
         let tokens = count_input_tokens(&request);
@@ -107,11 +114,15 @@ mod tests {
             messages: vec![
                 ChatMessage {
                     role: ChatRole::System,
-                    content: "You are a helpful assistant.".to_string(),
+                    content: Some("You are a helpful assistant.".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
                 },
                 ChatMessage {
                     role: ChatRole::User,
-                    content: "What is the weather?".to_string(),
+                    content: Some("What is the weather?".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
                 },
             ],
             temperature: None,
@@ -121,6 +132,9 @@ mod tests {
             stop: None,
             frequency_penalty: None,
             presence_penalty: None,
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
         };
 
         let tokens = count_input_tokens(&request);
@@ -135,7 +149,9 @@ mod tests {
             model: "gpt-4".to_string(),
             messages: vec![ChatMessage {
                 role: ChatRole::Assistant,
-                content: "".to_string(),
+                content: Some("".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
             }],
             temperature: None,
             top_p: None,
@@ -144,6 +160,9 @@ mod tests {
             stop: None,
             frequency_penalty: None,
             presence_penalty: None,
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
         };
 
         let tokens = count_input_tokens(&request);

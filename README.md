@@ -14,7 +14,7 @@
 ## Features
 
 - **MCP Server Aggregation**: Connect multiple MCP servers (STDIO, SSE, HTTP) through a single endpoint
-- **LLM Provider Routing**: Unified interface for OpenAI, Anthropic, Google, and other LLM providers
+- **LLM Provider Routing**: Unified interface for OpenAI, Anthropic, Google, and AWS Bedrock LLM providers with full tool calling support
 - **Context-Aware Tool Search**: Intelligent fuzzy search across all connected tools using natural language queries
 - **Protocol Support**: Supports STDIO (subprocess), SSE (Server-Sent Events), and streamable HTTP MCP servers
 - **Flexible Configuration**: TOML-based configuration with environment variable substitution
@@ -474,12 +474,12 @@ path = "/llm"   # LLM endpoint path (default: "/llm")
 
 #### Supported Providers
 
-Nexus currently supports four major LLM providers:
+Nexus currently supports four major LLM providers with full tool calling capabilities:
 
-1. **OpenAI** (including OpenAI-compatible APIs)
-2. **Anthropic** (Claude models)
-3. **Google** (Gemini models)
-4. **AWS Bedrock** (Multiple model families via AWS)
+1. **OpenAI** (including OpenAI-compatible APIs) - Full tool calling and parallel execution support
+2. **Anthropic** (Claude models) - Tool calling with function definitions and tool choice controls
+3. **Google** (Gemini models) - Function calling with parameter schemas and tool selection
+4. **AWS Bedrock** (Multiple model families via AWS) - Tool calling support across all supported model families
 
 #### Provider Configuration
 
@@ -790,6 +790,118 @@ Response:
 }
 ```
 
+##### Tool Calling (Function Calling)
+
+Nexus supports advanced tool calling across all LLM providers, allowing models to invoke external functions with structured parameters. All providers use the standardized OpenAI tool calling format for consistency.
+
+**Basic Tool Calling Example:**
+
+```bash
+curl -X POST http://localhost:8000/llm/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "anthropic/claude-3-5-sonnet-20241022",
+    "messages": [
+      {"role": "user", "content": "What'\''s the weather in San Francisco?"}
+    ],
+    "tools": [{
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get current weather for a location",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {"type": "string", "description": "City and state"},
+            "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+          },
+          "required": ["location"]
+        }
+      }
+    }],
+    "tool_choice": "auto"
+  }'
+```
+
+**Tool Choice Options:**
+- `"auto"` (default): Model decides whether to call tools
+- `"none"`: Model won't call any tools
+- `"required"`: Model must call at least one tool
+- `{"type": "function", "function": {"name": "specific_function"}}`: Force a specific tool
+
+**Parallel Tool Calls:**
+
+When supported by the provider, models can call multiple tools simultaneously:
+
+```json
+{
+  "model": "openai/gpt-4",
+  "messages": [{"role": "user", "content": "Get weather for NYC and LA"}],
+  "tools": [/* tool definitions */],
+  "parallel_tool_calls": true
+}
+```
+
+**Tool Conversation Flow:**
+
+Tool calling creates a multi-turn conversation:
+
+1. **User message** → asks a question requiring tool use
+2. **Assistant message** → responds with tool calls (no content)
+3. **Tool messages** → provide results from tool execution
+4. **Assistant message** → synthesizes final response
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": "What's the weather in Paris?"},
+    {
+      "role": "assistant",
+      "tool_calls": [{
+        "id": "call_123",
+        "type": "function",
+        "function": {"name": "get_weather", "arguments": "{\"location\": \"Paris\"}"}
+      }]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_123",
+      "content": "Weather in Paris: 22°C, sunny"
+    },
+    {
+      "role": "assistant",
+      "content": "The weather in Paris is currently 22°C and sunny!"
+    }
+  ]
+}
+```
+
+**Provider-Specific Tool Support:**
+
+All providers support the standardized format, but have different capabilities:
+
+- **OpenAI**: Full support including parallel calls and streaming tool calls
+- **Anthropic**: Tool calling with robust function definitions and tool choice controls
+- **Google**: Function calling with JSON schema validation and tool selection
+- **AWS Bedrock**: Tool calling support varies by model family (Claude, Nova, etc.)
+
+**Streaming Tool Calls:**
+
+Tool calls can be streamed just like regular responses:
+
+```bash
+curl -X POST http://localhost:8000/llm/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "openai/gpt-4",
+    "messages": [{"role": "user", "content": "Search for Python tutorials"}],
+    "tools": [/* tool definitions */],
+    "stream": true
+  }'
+```
+
+The stream will include tool call chunks as they're generated, followed by the tool execution results.
+
 ##### Chat Completions
 
 Send a chat completion request using the OpenAI-compatible format:
@@ -850,26 +962,41 @@ Streaming is supported for all providers (OpenAI, Anthropic, Google) and provide
 ##### OpenAI
 - Supports all standard OpenAI models (GPT-3.5, GPT-4, etc.)
 - Compatible with Azure OpenAI endpoints
-- Supports function calling (when available)
+- **Tool Calling**: Full support including parallel tool calls and streaming tool calls
+- **Function Definitions**: Comprehensive JSON schema support for parameters
+- **Tool Choice**: Supports all tool choice modes including specific function forcing
 - Supports streaming responses with Server-Sent Events (SSE)
 
 ##### Anthropic
 - System messages are automatically extracted and placed in the `system` field
 - Messages must alternate between user and assistant roles
 - Requires explicit `max_tokens` parameter (defaults to 4096 if not specified)
+- **Tool Calling**: Robust tool calling with function definitions and tool choice controls
+- **Tool Use**: Supports tool_use blocks with structured parameter validation
+- **Streaming Tools**: Tool calls can be streamed incrementally
 - Supports all Claude models (Opus, Sonnet, Haiku)
 - Supports streaming responses with Server-Sent Events (SSE)
 
 ##### Google
 - Assistant role is automatically mapped to "model" role
 - System messages are placed in the `systemInstruction` field
-- Supports Gemini models
+- **Function Calling**: Native function calling with JSON schema validation
+- **Tool Selection**: Supports automatic tool selection and forced function calls
+- **Parameter Validation**: Strict parameter schema enforcement
 - Returns appropriate safety ratings when available
 - Supports streaming responses with Server-Sent Events (SSE)
 
 ##### AWS Bedrock
-- Automatically detects and routes to appropriate model family (Anthropic, Amazon, Meta, etc.)
-- Each model family has its own request/response format, handled transparently
+- Uses the Bedrock conversation API for seamless integration
+- We have tested and verified Anthropic Claude, Amazon Nova, Meta Llama, Cohere Command, Mistral, and DeepSeek models
+- Other models may work, but we have not tested them. Please report any issues or successes.
+- **Tool Calling**: Support varies by model family:
+  - **Anthropic Claude**: Full tool calling support through Bedrock
+  - **Amazon Nova**: Native tool calling capabilities
+  - **Meta Llama**: Function calling has issues, avoid using
+  - **Cohere Command**: Tool use support
+  - **Mistral**: Tools work well with Bedrock
+  - **DeepSeek**: Tools do not work with Bedrock
 - Uses AWS SDK for authentication and request signing
 - Supports all Bedrock features including streaming and model-specific parameters
 - Regional endpoint selection based on configuration or AWS defaults

@@ -1,10 +1,43 @@
 # Implementing LLM Providers in Nexus
 
-This guide describes how to add support for a new LLM provider to the Nexus system. The process involves creating configuration structures, implementing the provider trait, adding integration tests, and connecting everything to the server.
+This guide describes how to add support for a new LLM provider to the Nexus system. The process involves creating configuration structures, implementing the provider trait with full tool calling support, adding integration tests, and connecting everything to the server.
 
 ## Overview
 
-The LLM crate provides a unified interface for interacting with different LLM providers (OpenAI, Anthropic, Google, etc.). Each provider implements the `Provider` trait, which standardizes chat completion and model listing operations.
+The LLM crate provides a unified interface for interacting with different LLM providers (OpenAI, Anthropic, Google, AWS Bedrock). Each provider implements the `Provider` trait, which standardizes chat completion, tool calling, and model listing operations across all providers.
+
+## Tool Calling Support
+
+All new LLM providers must support tool calling (function calling) capabilities. This includes:
+
+- **Function Definitions**: Converting OpenAI-compatible tool schemas to provider-specific formats
+- **Tool Choice Controls**: Supporting "auto", "none", "required", and specific function selection
+- **Tool Call Execution**: Handling tool calls in conversation messages
+- **Tool Response Integration**: Processing tool results and continuing conversations
+- **Streaming Tool Calls**: Supporting incremental tool call streaming where possible
+- **Parallel Tool Calls**: Supporting multiple tool calls where the provider allows
+
+The unified tool calling API uses the OpenAI-compatible format:
+
+```rust
+// Request includes tools array and tool_choice
+pub(crate) struct ChatCompletionRequest {
+    pub(crate) tools: Option<Vec<Tool>>,
+    pub(crate) tool_choice: Option<ToolChoice>,
+    pub(crate) parallel_tool_calls: Option<bool>,
+    // ... other fields
+}
+
+// Messages can include tool calls and tool responses
+pub(crate) struct ChatMessage {
+    pub(crate) role: ChatRole,  // User, Assistant, Tool, System
+    pub(crate) content: Option<String>,
+    pub(crate) tool_calls: Option<Vec<ToolCall>>,
+    pub(crate) tool_call_id: Option<String>,
+}
+```
+
+All providers must handle conversion between this unified format and their native tool calling APIs.
 
 ## Implementation Steps
 
@@ -111,7 +144,7 @@ impl Provider for YourProvider {
 
         // Make streaming API call and return SSE stream
         // See OpenAI/Anthropic/Google providers for examples
-        
+
         // Return Err(LlmError::StreamingNotSupported) if provider doesn't support streaming
     }
 
@@ -141,7 +174,7 @@ use crate::messages::{ChatCompletionRequest, ChatMessage};
 pub(super) struct YourProviderRequest {
     // Provider-specific fields
     // Document each field with rustdoc comments based on the API documentation
-    
+
     /// Enable streaming responses (if supported)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
@@ -175,10 +208,10 @@ pub(super) struct YourProviderResponse {
 pub(super) struct YourProviderStreamChunk<'a> {
     // Use borrowed strings (&'a str) for better performance
     // Document fields based on provider's streaming API
-    
+
     #[serde(borrow)]
     pub id: Cow<'a, str>,
-    
+
     // Other fields...
 }
 
@@ -258,15 +291,15 @@ pub(crate) type ChatCompletionStream = Pin<Box<dyn Stream<Item = crate::Result<C
 #[async_trait]
 pub(crate) trait Provider: Send + Sync {
     async fn chat_completion(&self, request: ChatCompletionRequest) -> crate::Result<ChatCompletionResponse>;
-    
+
     /// Stream chat completion responses. Default returns StreamingNotSupported error.
     async fn chat_completion_stream(&self, request: ChatCompletionRequest) -> crate::Result<ChatCompletionStream> {
         Err(LlmError::StreamingNotSupported)
     }
-    
+
     async fn list_models(&self) -> crate::Result<Vec<Model>>;
     fn name(&self) -> &str;
-    
+
     /// Check if provider supports streaming. Default is false.
     fn supports_streaming(&self) -> bool {
         false
@@ -359,11 +392,11 @@ use crate::messages::{ChatCompletionChunk, ObjectType, ChunkChoice, Delta};
 
 async fn chat_completion_stream(&self, request: ChatCompletionRequest) -> crate::Result<ChatCompletionStream> {
     let url = format!("{}/streaming-endpoint", self.base_url);
-    
+
     // Enable streaming in the request
     let mut provider_request = YourProviderRequest::from(request);
     provider_request.stream = Some(true);
-    
+
     // Make the streaming request
     let response = self.client
         .post(&url)
@@ -371,13 +404,13 @@ async fn chat_completion_stream(&self, request: ChatCompletionRequest) -> crate:
         .send()
         .await
         .map_err(|e| LlmError::ConnectionError(e.to_string()))?;
-    
+
     // Check for errors
     if !response.status().is_success() {
         // Handle error responses appropriately
         return Err(/* appropriate error */);
     }
-    
+
     // Convert response to SSE stream
     let stream = response
         .bytes_stream()
@@ -390,7 +423,7 @@ async fn chat_completion_stream(&self, request: ChatCompletionRequest) -> crate:
                     // Parse the provider's native chunk format
                     let native_chunk = sonic_rs::from_str::<YourProviderStreamChunk>(&event.data)
                         .ok()?;
-                    
+
                     // CRITICAL: Convert to OpenAI-compatible format
                     // This ensures all providers return the same chunk structure
                     let openai_chunk = ChatCompletionChunk {
@@ -408,13 +441,13 @@ async fn chat_completion_stream(&self, request: ChatCompletionRequest) -> crate:
                         }],
                         usage: /* include in final chunk only */,
                     };
-                    
+
                     Some(Ok(openai_chunk))
                 }
                 Err(e) => Some(Err(LlmError::ConnectionError(e.to_string()))),
             }
         });
-    
+
     Ok(Box::pin(stream))
 }
 ```
@@ -446,7 +479,7 @@ impl<'a> YourProviderStreamChunk<'a> {
         // - Include role in first chunk's delta
         // - Add usage statistics in final chunk
         // - Prefix model name with provider
-        
+
         ChatCompletionChunk {
             id: self.id.into_owned(),
             object: ObjectType::ChatCompletionChunk,
@@ -519,7 +552,7 @@ for (name, provider_config) in config.providers.into_iter() {
 
 ### 6. Add Integration Tests
 
-Create mock provider in `crates/integration-tests/src/llms/your_provider.rs`:
+Create mock provider in `crates/integration-tests/src/llms/your_provider.rs` with tool calling support:
 
 ```rust
 use std::collections::HashMap;
@@ -562,15 +595,24 @@ impl YourProviderMock {
         self.custom_responses.insert(trigger.into(), response.into());
         self
     }
-    
+
     pub fn with_streaming(mut self) -> Self {
         self.streaming_enabled = true;
         self
     }
-    
+
     pub fn with_streaming_chunks(mut self, chunks: Vec<String>) -> Self {
         self.streaming_chunks = Some(chunks);
         self.streaming_enabled = true;
+        self
+    }
+
+    /// Configure tool calling support with specific tool call responses
+    pub fn with_tool_call(mut self, function_name: impl Into<String>, arguments: impl Into<String>) -> Self {
+        self.custom_responses.insert(
+            format!("tool:{}", function_name.into()),
+            arguments.into()
+        );
         self
     }
 }
@@ -712,10 +754,10 @@ async fn chat_completions_streaming() {
 
     // Test streaming with stream_completions helper
     let chunks = llm.stream_completions(request).await;
-    
+
     // Should have multiple chunks
     assert!(chunks.len() >= 2);
-    
+
     // Verify chunk structure with snapshot
     let first_chunk = &chunks[0];
     insta::assert_json_snapshot!(first_chunk, {
@@ -736,7 +778,7 @@ async fn chat_completions_streaming() {
       }]
     }
     "#);
-    
+
     // Test accumulated content
     let content = llm.stream_completions_content(request).await;
     assert_eq!(content, "Hello! How can I help?");
@@ -797,15 +839,35 @@ async fn handles_rate_limiting() {
 
 ## Testing Checklist
 
+### Core Functionality
 - [ ] Configuration parsing tests in config crate
 - [ ] Integration tests with mock servers using TestServer
 - [ ] Error handling tests for all status codes
+- [ ] Test model listing with various scenarios
+- [ ] Test chat completions with different parameters
+
+### Streaming Support
 - [ ] Test streaming completions with `stream_completions()` helper
 - [ ] Test streaming content accumulation with `stream_completions_content()`
 - [ ] Test streaming error handling (network errors, malformed chunks)
-- [ ] Test model listing with various scenarios
-- [ ] Test chat completions with different parameters
 - [ ] Test that last streaming chunk includes usage statistics
+
+### Tool Calling (Required for all new providers)
+- [ ] **Basic tool calling**: Test tool definition parsing and execution
+- [ ] **Tool choice modes**: Test "auto", "none", "required", and specific function selection
+- [ ] **Tool call streaming**: Test incremental tool call generation in streaming responses
+- [ ] **Tool conversation flow**: Test multi-turn conversations with tool execution results
+- [ ] **Tool call error handling**: Test malformed tool definitions and execution errors
+- [ ] **Parallel tool calls**: Test multiple tool calls in one response (if provider supports)
+- [ ] **Tool parameter validation**: Test JSON schema validation and error responses
+- [ ] **Tool response integration**: Test incorporating tool results into final responses
+
+### Advanced Tool Scenarios
+- [ ] **Complex tool parameters**: Test with nested objects, arrays, and optional parameters
+- [ ] **Tool choice "required"**: Verify model is forced to use tools when specified
+- [ ] **Tool choice specific function**: Test forcing a particular tool to be called
+- [ ] **Empty tool results**: Test handling when tool execution returns no data
+- [ ] **Tool execution failures**: Test error handling when tools fail or return errors
 
 ## Architecture Notes
 
@@ -840,157 +902,103 @@ When updating providers:
 
 ## AWS Bedrock Provider Architecture
 
-### Family-Based Organization
+### Unified Converse API
 
-The AWS Bedrock provider uses a unique architecture to handle multiple model families through a single AWS service. Unlike other providers that connect to a single vendor API, Bedrock aggregates models from various vendors (Anthropic, Amazon, Meta, Cohere, etc.), each with different request/response formats.
+The AWS Bedrock provider uses AWS's unified Converse API, which provides a single interface to access all foundation models available on Bedrock. This simplifies the architecture significantly compared to previous family-based approaches.
 
 ### Directory Structure
 
 ```
 crates/llm/src/provider/bedrock/
-├── mod.rs                    # Main Bedrock provider implementation
-├── families.rs               # Family detection and routing logic
-└── families/
-    ├── mod.rs               # Family trait and common types
-    ├── anthropic/           # Anthropic Claude models
-    │   ├── mod.rs
-    │   ├── input.rs         # Anthropic-specific request format
-    │   └── output.rs        # Anthropic-specific response format
-    ├── amazon/              # Amazon Titan and Nova models
-    │   ├── mod.rs
-    │   ├── titan/           # Titan family
-    │   │   ├── mod.rs
-    │   │   ├── input.rs
-    │   │   └── output.rs
-    │   └── nova/            # Nova family
-    │       ├── mod.rs
-    │       ├── input.rs
-    │       └── output.rs
-    ├── meta/                # Meta Llama models
-    │   ├── mod.rs
-    │   ├── input.rs
-    │   └── output.rs
-    ├── cohere/              # Cohere Command models
-    │   ├── mod.rs
-    │   ├── input.rs
-    │   └── output.rs
-    └── mistral/             # Mistral AI models
-        ├── mod.rs
-        ├── input.rs
-        └── output.rs
+├── mod.rs       # Main Bedrock provider implementation using Converse API
+├── input.rs     # Direct conversion to AWS Converse API types
+└── output.rs    # Direct conversion from AWS Converse API responses
 ```
 
-### The Family Trait
+### Converse API Benefits
 
-Each model family implements the `BedrockFamily` trait:
+The Converse API provides:
+
+1. **Unified Interface**: Single API for all model families (Anthropic, Amazon, Meta, Mistral, Cohere, AI21)
+2. **Consistent Request Format**: Same input structure regardless of the underlying model
+3. **Built-in Tool Support**: Native tool calling support across all compatible models
+4. **Streaming Support**: Unified streaming interface for all models
+5. **AWS SDK Integration**: Full AWS authentication and request signing
+
+### Implementation Approach
+
+The Bedrock provider uses direct conversion between OpenAI-compatible types and AWS SDK types:
 
 ```rust
-#[async_trait]
-pub(crate) trait BedrockFamily: Send + Sync {
-    /// Convert unified request to family-specific format
-    fn prepare_request(&self, request: ChatCompletionRequest) -> anyhow::Result<PreparedRequest>;
-    
-    /// Parse family-specific response to unified format
-    fn parse_response(&self, response: &[u8]) -> anyhow::Result<ChatCompletionResponse>;
-    
-    /// Parse streaming chunks (if supported)
-    fn parse_stream_chunk<'a>(&self, chunk: &'a [u8]) -> anyhow::Result<Option<BedrockStreamChunk<'a>>>;
-    
-    /// Check if this family supports the given model
-    fn supports_model(&self, model_id: &str) -> bool;
-    
-    /// Get the family name for logging
-    fn name(&self) -> &str;
+// Direct conversion from ChatCompletionRequest to AWS Converse API
+impl From<ChatCompletionRequest> for ConverseInput {
+    fn from(request: ChatCompletionRequest) -> Self {
+        // Convert messages, tools, and inference config directly
+        // No intermediate types needed
+    }
 }
-```
 
-### Model ID Detection
-
-The `families.rs` module contains the logic to detect which family handles a given model:
-
-```rust
-pub(super) fn detect_family(model_id: &str) -> anyhow::Result<Box<dyn BedrockFamily>> {
-    if model_id.starts_with("anthropic.") {
-        Ok(Box::new(AnthropicFamily))
-    } else if model_id.starts_with("amazon.titan") {
-        Ok(Box::new(TitanFamily))
-    } else if model_id.starts_with("amazon.nova") {
-        Ok(Box::new(NovaFamily))
-    } else if model_id.starts_with("meta.") {
-        Ok(Box::new(MetaFamily))
-    } else if model_id.starts_with("cohere.") {
-        Ok(Box::new(CohereFamily))
-    } else if model_id.starts_with("mistral.") {
-        Ok(Box::new(MistralFamily))
-    } else {
-        Err(anyhow!("Unsupported model family: {}", model_id))
+// Direct conversion from Converse response to unified format
+impl From<ConverseOutput> for ChatCompletionResponse {
+    fn from(output: ConverseOutput) -> Self {
+        // Convert AWS response directly to OpenAI-compatible format
     }
 }
 ```
+
+### Model Support
+
+Through the Converse API, Nexus theoretically supports **all models available on AWS Bedrock**. However, we have specifically tested and verified support for:
+
+**Tested Model Families:**
+- **AI21 Jamba**: Jamba 1.5 Mini and Large models with 256K context window
+- **Anthropic Claude**: All Claude 3 models (Opus, Sonnet, Haiku) and Claude Instant
+- **Amazon Nova**: Nova Micro, Lite, Pro models
+- **Amazon Titan**: Titan Text models
+- **Meta Llama**: Llama 2 and Llama 3 models
+- **Cohere Command**: Command and Command R models
+- **DeepSeek**: DeepSeek R1 reasoning models
+- **Mistral**: Mistral 7B and Mixtral models
+
+**Untested but Should Work:** Any new models added to Bedrock should work automatically through the Converse API without code changes.
+
+### Tool Calling Support
+
+The Converse API provides native tool calling support that works across all compatible models:
+
+```rust
+// Tools are converted directly to AWS ToolSpecification format
+let tool_config = tools.and_then(|tools| {
+    if tools.is_empty() {
+        None
+    } else {
+        convert_tools(tools, tool_choice, &model).ok()
+    }
+});
+```
+
+Tool calling capabilities vary by model:
+- **Anthropic Claude**: Full tool calling support
+- **Amazon Nova**: Native tool calling capabilities
+- **Meta Llama**: Function calling where supported
+- **Cohere Command**: Tool use support
+- **Others**: Support depends on the specific model's capabilities
 
 ### Request/Response Flow
 
 1. **Request arrives** with model ID like `anthropic.claude-3-5-sonnet-20241022-v2:0`
-2. **Family detection** routes to `AnthropicFamily`
-3. **Request conversion**: `ChatCompletionRequest` → `AnthropicRequest`
-4. **AWS SDK call** with family-specific JSON body
-5. **Response parsing**: Family-specific format → `ChatCompletionResponse`
-6. **Streaming handling**: Each family parses its own SSE format
+2. **Direct conversion** from `ChatCompletionRequest` to `ConverseInput`
+3. **Converse API call** using AWS SDK with unified format
+4. **Direct conversion** from `ConverseOutput` to `ChatCompletionResponse`
+5. **Streaming handling** uses `ConverseStreamOutput` for all models
 
-### Adding a New Bedrock Model Family
+### Testing Bedrock Models
 
-When AWS adds support for a new model provider:
+Testing approach for Bedrock models:
 
-1. **Create family module** in `families/new_provider/`
-2. **Define input/output types** matching the provider's API format
-3. **Implement BedrockFamily trait**
-4. **Add detection logic** in `families.rs`
-5. **Add tests** for request/response conversion
-
-Example for a hypothetical new provider:
-
-```rust
-// families/new_provider/mod.rs
-pub(crate) struct NewProviderFamily;
-
-#[async_trait]
-impl BedrockFamily for NewProviderFamily {
-    fn supports_model(&self, model_id: &str) -> bool {
-        model_id.starts_with("newprovider.")
-    }
-    
-    fn prepare_request(&self, request: ChatCompletionRequest) -> anyhow::Result<PreparedRequest> {
-        let provider_request = NewProviderRequest::from(request);
-        let body = sonic_rs::to_vec(&provider_request)?;
-        Ok(PreparedRequest { body })
-    }
-    
-    // ... other trait methods
-}
-```
-
-### Streaming Considerations
-
-Each family has different streaming formats:
-
-- **Anthropic**: Uses message events (`message_start`, `content_block_delta`, etc.)
-- **Nova**: Uses typed events (`messageStart`, `contentBlockDelta`, `metadata`)
-- **Cohere**: Uses generations with incremental text
-- **Meta/Llama**: Uses generation events with incremental tokens
-
-The family implementation must:
-1. Parse the provider's SSE format
-2. Extract incremental content
-3. Convert to unified `ChatCompletionChunk` format
-4. Handle finish reasons and usage statistics
-
-### Testing Bedrock Families
-
-Each family should have:
-
-1. **Unit tests** for request/response conversion in `output.rs`
-2. **Integration tests** with mock Bedrock responses
-3. **Live tests** (marked with `#[ignore]`) that require AWS credentials
+1. **Unit tests** for input/output conversion in `input.rs` and `output.rs`
+2. **Integration tests** with mock Converse API responses
+3. **Live tests** (marked with `#[ignore]`) that require AWS credentials and test specific models
 
 Example test structure:
 
@@ -998,44 +1006,62 @@ Example test structure:
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
-    fn test_request_conversion() {
+    fn test_converse_input_conversion() {
         let request = ChatCompletionRequest { /* ... */ };
-        let family = NewProviderFamily;
-        let prepared = family.prepare_request(request).unwrap();
-        
-        // Verify JSON structure
-        let json: serde_json::Value = sonic_rs::from_slice(&prepared.body).unwrap();
-        assert_eq!(json["model"], "newprovider.model-v1");
+        let converse_input = ConverseInput::from(request);
+
+        // Verify AWS SDK structure
+        assert_eq!(converse_input.model_id, Some("anthropic.claude-3-sonnet".to_string()));
     }
-    
-    #[test]
-    fn test_response_parsing() {
-        let response_json = r#"{ /* provider response */ }"#;
-        let family = NewProviderFamily;
-        let response = family.parse_response(response_json.as_bytes()).unwrap();
-        
-        // Verify conversion
-        assert_eq!(response.choices[0].message.content, "Expected content");
+
+    #[tokio::test]
+    #[ignore] // Requires AWS credentials
+    async fn test_live_claude_completion() {
+        let provider = BedrockProvider::new(/* ... */).await.unwrap();
+        let response = provider.chat_completion(/* ... */).await.unwrap();
+        assert!(!response.choices.is_empty());
     }
 }
 ```
 
-### Key Differences from Other Providers
+### Key Advantages over Family-Based Approach
 
-1. **Multi-vendor**: Single provider handles multiple vendor APIs
-2. **AWS SDK**: Uses AWS request signing instead of API keys
-3. **Regional**: Models available vary by AWS region
-4. **Family routing**: Dynamic dispatch based on model ID prefix
-5. **Diverse formats**: Each family has completely different JSON schemas
+1. **Simplified Architecture**: Single conversion path instead of multiple family handlers
+2. **Automatic Model Support**: New Bedrock models work without code changes
+3. **Consistent Tool Calling**: Unified tool support across all models
+4. **AWS SDK Integration**: Full AWS credential chain and regional support
+5. **Maintenance**: Much less code to maintain and fewer edge cases
 
 ## Common Pitfalls
 
+### Error Handling
 1. **Never expose internal errors**: Always use `InternalError(None)` for Nexus errors
 2. **Always log 5xx errors**: These are critical for debugging
-3. **Handle streaming properly**: Implement SSE streaming or return `StreamingNotSupported` error
-4. **Test error scenarios**: Don't just test happy paths
+3. **Test error scenarios**: Don't just test happy paths - include all error conditions
+
+### Streaming Implementation
+4. **Handle streaming properly**: Implement SSE streaming or return `StreamingNotSupported` error
 5. **Include usage in final chunk**: The last streaming chunk should contain usage statistics
 6. **Escape SSE data**: Ensure newlines in content are properly escaped in SSE format
-7. **For Bedrock**: Remember each family has different streaming formats and error responses
+
+### Tool Calling Implementation
+7. **Tool calling is mandatory**: All new providers must implement full tool calling support
+8. **Convert to OpenAI format**: Always convert provider-specific tool formats to OpenAI-compatible structures
+9. **Handle all tool choice modes**: Support "auto", "none", "required", and specific function selection
+10. **Validate tool schemas**: Properly validate and convert JSON schemas for tool parameters
+11. **Stream tool calls correctly**: Tool calls must be streamable in chunks, not as single blocks
+12. **Handle tool conversation flow**: Support multi-turn conversations with tool execution results
+13. **Test tool error cases**: Include tests for malformed tools, invalid parameters, and execution failures
+
+### Provider-Specific Considerations
+14. **For Bedrock**: Use the unified Converse API - no family-based logic needed
+15. **For Anthropic**: Handle tool_use blocks and convert to standard format
+16. **For Google**: Map function_call format to OpenAI tool_calls structure
+17. **For OpenAI**: Support parallel tool calls where the model allows it
+
+### Architecture Requirements
+18. **Use ModelManager**: Always use ModelManager for consistent model resolution across providers
+19. **Handle model renaming**: Support custom model names through configuration
+20. **Provider namespacing**: Always prefix model names with provider name in responses

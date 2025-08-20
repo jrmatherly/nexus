@@ -84,6 +84,8 @@ impl TestLlmProvider for BedrockMock {
                 "/model/{model_id}/invoke-with-response-stream",
                 post(invoke_model_streaming),
             )
+            .route("/model/{model_id}/converse", post(converse_model))
+            .route("/model/{model_id}/converse-stream", post(converse_model_streaming))
             .fallback(fallback_handler)
             .with_state(state);
 
@@ -255,6 +257,78 @@ async fn fallback_handler(request: Request) -> Response {
     (StatusCode::NOT_FOUND, format!("Path not found: {} {}", method, uri)).into_response()
 }
 
+async fn converse_model(Path(model_id): Path<String>, State(state): State<Arc<TestState>>, body: Bytes) -> Response {
+    println!("Bedrock mock server converse request for model: {}", model_id);
+
+    // Parse the body as JSON
+    let body: Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("Failed to parse body as JSON: {}", e);
+            return (StatusCode::BAD_REQUEST, format!("Invalid JSON: {}", e)).into_response();
+        }
+    };
+
+    // Extract the user message content from the Converse API format
+    let mut prompt = String::new();
+    if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
+        for message in messages {
+            if let Some(content) = message.get("content").and_then(|c| c.as_array()) {
+                for content_block in content {
+                    if let Some(text) = content_block.get("text").and_then(|t| t.as_str()) {
+                        if !prompt.is_empty() {
+                            prompt.push(' ');
+                        }
+                        prompt.push_str(text);
+                    }
+                }
+            }
+        }
+    }
+
+    // Check for error triggers
+    if !prompt.is_empty() {
+        if let Some((status, message)) = state.error_responses.get(&prompt) {
+            return (
+                StatusCode::from_u16(*status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                message.clone(),
+            )
+                .into_response();
+        }
+
+        if let Some(response) = state.custom_responses.get(&prompt) {
+            return generate_converse_response(response).into_response();
+        }
+    }
+
+    // Extract specific prompts for DeepSeek models that expect "User: <content>\nAssistant:" format
+    if (model_id.starts_with("deepseek.") || model_id.contains(".deepseek."))
+        && let Some(custom_prompt) = extract_deepseek_prompt(&body)
+        && let Some(response) = state.custom_responses.get(&custom_prompt)
+    {
+        return generate_converse_response(response).into_response();
+    }
+
+    // Generate default response
+    let default_response = "Hello! I'm a mock Bedrock Converse response.";
+    generate_converse_response(default_response).into_response()
+}
+
+async fn converse_model_streaming(
+    Path(model_id): Path<String>,
+    State(_state): State<Arc<TestState>>,
+    _body: Bytes,
+) -> Response {
+    println!("Bedrock mock server converse streaming request for model: {}", model_id);
+
+    // For now, return an error since streaming implementation is complex
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        "Converse streaming not implemented in mock",
+    )
+        .into_response()
+}
+
 async fn invoke_model_streaming(
     Path(model_id): Path<String>,
     State(_state): State<Arc<TestState>>,
@@ -264,4 +338,66 @@ async fn invoke_model_streaming(
 
     // For now, return an error since streaming implementation is complex
     (StatusCode::NOT_IMPLEMENTED, "Streaming not implemented in mock").into_response()
+}
+
+/// Extract DeepSeek-specific prompt format from Converse API request
+fn extract_deepseek_prompt(body: &Value) -> Option<String> {
+    let messages = body.get("messages")?.as_array()?;
+    let mut formatted_prompt = String::new();
+
+    for message in messages {
+        let role = message.get("role")?.as_str()?;
+        let content = message.get("content")?.as_array()?;
+
+        for content_block in content {
+            if let Some(text) = content_block.get("text")?.as_str() {
+                match role {
+                    "user" => {
+                        if !formatted_prompt.is_empty() {
+                            formatted_prompt.push('\n');
+                        }
+                        formatted_prompt.push_str("User: ");
+                        formatted_prompt.push_str(text);
+                    }
+                    "assistant" => {
+                        formatted_prompt.push_str("\nAssistant: ");
+                        formatted_prompt.push_str(text);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if !formatted_prompt.is_empty() {
+        formatted_prompt.push_str("\nAssistant:");
+        Some(formatted_prompt)
+    } else {
+        None
+    }
+}
+
+/// Generate Bedrock Converse API response format
+fn generate_converse_response(content: &str) -> (StatusCode, String) {
+    let response = serde_json::json!({
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [{
+                    "text": content
+                }]
+            }
+        },
+        "stopReason": "end_turn",
+        "usage": {
+            "inputTokens": 10,
+            "outputTokens": 15,
+            "totalTokens": 25
+        },
+        "metrics": {
+            "latencyMs": 100
+        }
+    });
+
+    (StatusCode::OK, response.to_string())
 }

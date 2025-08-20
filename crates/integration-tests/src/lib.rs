@@ -354,6 +354,26 @@ impl LlmTestClient {
         self.completions(request).await
     }
 
+    /// Send a chat completion request that may fail (for testing error cases)
+    pub async fn try_completions(&self, request: serde_json::Value) -> Result<serde_json::Value, String> {
+        let response = self
+            .client
+            .post(&format!("{}/v1/chat/completions", self.base_path), &request)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let status = response.status();
+        if status != 200 {
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unable to read error".to_string());
+            return Err(format!("Status {status}: {error_text}"));
+        }
+
+        response.json().await.map_err(|e| e.to_string())
+    }
+
     /// Send a chat completion request and return the raw response
     async fn send_completion_request(&self, request: serde_json::Value) -> reqwest::Response {
         self.client

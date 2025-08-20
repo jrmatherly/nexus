@@ -26,12 +26,14 @@ rate-limit.workspace = true
 reqwest = { workspace = true, features = ["json", "stream"] }
 secrecy.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 sonic-rs.workspace = true
 thiserror.workspace = true
 tiktoken-rs.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 
