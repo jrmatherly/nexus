@@ -155,7 +155,7 @@ nexus:
   # https://nexusrouter.com/docs
   config: |
     [server]
-    listen_address = "127.0.0.1:8000"
+    listen_address = "0.0.0.0:8000"
 
     [server.health]
     enabled = true
