@@ -35,7 +35,7 @@ spec:
         {{- end }}
         {{- if not (empty .Values.volumes)}}
         {{- range .Values.volumes }}
-        - {{- . | toYaml | trim | nindent 10 }}
+        - {{ . | toYaml | trim | nindent 10 }}
         {{- end }}
         {{- end }}
       containers:
@@ -75,7 +75,7 @@ spec:
             {{- end }}
             {{- if not (empty .Values.volumeMounts)}}
             {{- range .Values.volumeMounts }}
-            - {{- . | toYaml | trim | nindent 14 }}
+            - {{ . | toYaml | trim | nindent 14 }}
             {{- end }}
             {{- end }}
           {{ if .Values.lifecycle }}
