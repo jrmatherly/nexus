@@ -5,7 +5,7 @@ The repository is hosted on [GitHub's Container Registry](https://docs.github.co
 
 ## Usage
 
-It is recommended to not use this chart as-is due to it pointing to the latest unstable version.
+It is recommended to not use this chart as-is due to it pointing to the latest stable version.
 
 Instead, find the latest Nexus version you want to use, and override the tag in your values.yaml:
 
