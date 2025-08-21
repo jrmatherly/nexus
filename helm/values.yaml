@@ -1,0 +1,183 @@
+# Number of pod replicas to deploy for Nexus.
+# https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#scaling-a-deployment
+replicaCount: 1
+
+image:
+  # Kubernetes image pull policy. Options: Always, IfNotPresent, Never.
+  # https://kubernetes.io/docs/concepts/containers/images/#image-pull-policy
+  pullPolicy: Always
+
+  # Docker repository for Nexus image.
+  repository: ghcr.io/grafbase/nexus
+
+  # Image tag to deploy. Default: stable.
+  tag: stable
+
+# List of secrets for accessing private container registries.
+# https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+imagePullSecrets: []
+
+# Override Helm release name for custom resource names.
+nameOverride: ''
+
+# Override the full Helm release name for custom resource names.
+fullnameOverride: ''
+
+serviceAccount:
+  # Whether to create a new service account.
+  create: true
+
+  # Annotations to add to the service account.
+  annotations: {}
+
+  # Specify a custom name for the service account if `create` is false.
+  name: ''
+
+# Annotations for the Nexus pods.
+# https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
+podAnnotations: {}
+
+# Security context for the Pod, defining security settings for all containers.
+# https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# Security context for each container, defining privileges and access control.
+# https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - NET_RAW
+
+# https://kubernetes.io/docs/concepts/services-networking/service/
+service:
+  # Kubernetes service type. Options: ClusterIP, NodePort, LoadBalancer.
+  type: ClusterIP
+
+  # Port on which the service will be exposed.
+  port: 80
+
+  # Container port to which the service will forward traffic.
+  targetPort: 8000
+
+  # Name of the service port.
+  name: http
+
+  # Node port for NodePort service type, if applicable.
+  nodePort: 30500
+
+# https://kubernetes.io/docs/concepts/services-networking/ingress/
+ingress:
+  # Enable ingress for Nexus.
+  enabled: false
+
+  # Specify ingress class, e.g., nginx.
+  className: 'nginx'
+
+  hosts:
+    - # Hostname for the ingress route.
+      host: nexus.local
+
+      paths:
+        - # Path for routing traffic to the service.
+          path: /*
+
+          # Kubernetes path type.
+          pathType: ImplementationSpecific
+
+          backend:
+            # Backend service name.
+            serviceName: nexus
+
+            # Backend service port.
+            servicePort: 8000
+
+# Resource requests and limits for Nexus containers.
+# https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+# https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/
+autoscaling:
+  # Enable autoscaling for the deployment.
+  enabled: true
+
+  # Minimum number of replicas.
+  minReplicas: 2
+
+  # Maximum number of replicas.
+  maxReplicas: 20
+
+  # Target CPU utilization for scaling.
+  targetCPUUtilizationPercentage: 70
+
+# Node selector for pod scheduling.
+# https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#nodeselector
+nodeSelector: {}
+
+# Tolerations for pod scheduling.
+# https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/
+tolerations: []
+
+# Affinity rules for pod scheduling.
+# https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#affinity-and-anti-affinity
+affinity: {}
+
+defaultAffinity:
+  enabled: false
+
+# Configmap that will be mounted as env vars
+# https://kubernetes.io/docs/concepts/configuration/configmap/
+configmap:
+  # Enable a ConfigMap for environment-specific settings.
+  enabled: false
+  values:
+    # Custom environment variable values.
+    SERVICE_NAME: nexus
+    LISTEN_ADDRESS: 0.0.0.0:8000
+
+# Nexus specific configuration
+nexus:
+  # Additional command-line arguments to pass to Nexus.
+  args: []
+
+  # Opt-out of providing configuration through Helm values
+  externalConfig: false
+  # Configuration for Nexus.
+  # https://nexusrouter.com/docs
+  config: |
+    [server]
+    listen_address = "127.0.0.1:8000"
+
+    [server.health]
+    enabled = true
+    path = "/health"
+
+readinessProbe:
+  initialDelaySeconds: 5
+  timeoutSeconds: 30
+
+# Secrets to be mounted as env vars
+# https://kubernetes.io/docs/concepts/configuration/secret/
+secrets:
+  # Enable Kubernetes secrets for secure data.
+  enabled: false
+
+  # Define secret values to be used in the application.
+  values: []
+
+# Additional volumes for the deployment.
+# https://kubernetes.io/docs/concepts/storage/volumes/
+volumes: []
+
+# Mount points for volumes within containers.
+# https://kubernetes.io/docs/concepts/storage/volumes/#using-volumes
+volumeMounts: []
