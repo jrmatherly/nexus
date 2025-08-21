@@ -1,0 +1,57 @@
+name: Nexus Helm Chart
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY_REPOSITORY: ghcr.io/grafbase/helm-charts
+  REGISTRY_USERNAME: grafbase
+  CHART_PATH: helm
+
+jobs:
+  detect-change-type:
+    runs-on: depot-ubuntu-24.04-small
+    outputs:
+      build: ${{ steps.filter.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        id: filter
+        with:
+          filters: |
+            build:
+              - helm
+
+  nexus-helm-chart:
+    name: Push the Nexus Helm Chart
+    runs-on: depot-ubuntu-24.04-small
+    needs: [detect-change-type]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4.3.0
+        with:
+          version: 'v3.16.2'
+
+      - name: Login to ghcr.io
+        shell: bash
+        run: |
+          echo "Login to ghcr.io with user ${{ env.REGISTRY_USERNAME }}"
+          echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ghcr.io --username ${{ env.REGISTRY_USERNAME }} --password-stdin
+
+      - name: Package and push the Chart
+        shell: bash
+        run: |
+          echo "Building Helm Chart"
+          CHART_VER=$(helm show chart ${{ env.CHART_PATH }} | grep "^version:" | gawk '{print $2}')
+          helm package ${{ env.CHART_PATH }}
+          helm push nexus-$CHART_VER.tgz oci://${{ env.REGISTRY_REPOSITORY }} --debug
