@@ -269,6 +269,24 @@ pub(super) struct OpenAIDelta<'a> {
 
 impl<'a> From<OpenAIDelta<'a>> for ChatMessageDelta {
     fn from(delta: OpenAIDelta<'a>) -> Self {
+        use crate::messages::{StreamingFunctionCall, StreamingToolCall};
+
+        // Convert tool_calls from sonic_rs::Value to StreamingToolCall
+        let tool_calls = delta.tool_calls.map(|calls| {
+            calls
+                .into_iter()
+                .filter_map(|call| {
+                    // Try to deserialize the Value into our enum
+                    sonic_rs::from_value::<StreamingToolCall>(&call).ok()
+                })
+                .collect()
+        });
+
+        // Convert function_call from sonic_rs::Value to StreamingFunctionCall
+        let function_call = delta
+            .function_call
+            .and_then(|call| sonic_rs::from_value::<StreamingFunctionCall>(&call).ok());
+
         Self {
             role: delta.role.map(|s| match s.as_ref() {
                 "assistant" => ChatRole::Assistant,
@@ -277,8 +295,8 @@ impl<'a> From<OpenAIDelta<'a>> for ChatMessageDelta {
                 other => ChatRole::Other(other.to_string()),
             }),
             content: delta.content.map(|s| s.into_owned()),
-            tool_calls: delta.tool_calls,
-            function_call: delta.function_call,
+            tool_calls,
+            function_call,
         }
     }
 }

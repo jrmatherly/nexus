@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::messages::{ChatCompletionRequest, ChatMessage};
+use crate::messages::{ChatCompletionRequest, ChatMessage, Tool, ToolChoice};
 
 /// Request body for OpenAI Chat Completions API.
 ///
@@ -60,20 +60,56 @@ pub(super) struct OpenAIRequest {
     /// Tokens will be sent as data-only server-sent events as they become available,
     /// with the stream terminated by a `data: [DONE]` message.
     pub(super) stream: bool,
+
+    /// A list of tools the model may call. Currently, only functions are supported as a tool.
+    /// Use this to provide a list of functions the model may generate JSON inputs for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) tools: Option<Vec<Tool>>,
+
+    /// Controls which (if any) tool is called by the model.
+    /// none means the model will not call any tool and instead generates a message.
+    /// auto means the model can pick between generating a message or calling one or more tools.
+    /// required means the model must call one or more tools.
+    /// Specifying a particular tool via {"type": "function", "function": {"name": "my_function"}}
+    /// forces the model to call that tool.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) tool_choice: Option<ToolChoice>,
+
+    /// Whether to enable parallel function calling during tool use.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) parallel_tool_calls: Option<bool>,
 }
 
 impl From<ChatCompletionRequest> for OpenAIRequest {
     fn from(request: ChatCompletionRequest) -> Self {
+        let ChatCompletionRequest {
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            top_p,
+            frequency_penalty,
+            presence_penalty,
+            stop,
+            stream,
+            tools,
+            tool_choice,
+            parallel_tool_calls,
+        } = request;
+
         Self {
-            model: request.model,
-            messages: request.messages,
-            temperature: request.temperature,
-            max_completion_tokens: request.max_tokens,
-            top_p: request.top_p,
-            frequency_penalty: request.frequency_penalty,
-            presence_penalty: request.presence_penalty,
-            stop: request.stop,
-            stream: request.stream.unwrap_or(false),
+            model,
+            messages,
+            temperature,
+            max_completion_tokens: max_tokens,
+            top_p,
+            frequency_penalty,
+            presence_penalty,
+            stop,
+            stream: stream.unwrap_or(false),
+            tools,
+            tool_choice,
+            parallel_tool_calls,
         }
     }
 }

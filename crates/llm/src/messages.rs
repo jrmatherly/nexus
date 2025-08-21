@@ -78,6 +78,30 @@ pub(crate) struct ChatCompletionRequest {
     /// Note: Not all providers support streaming.
     #[serde(default)]
     pub(crate) stream: Option<bool>,
+
+    /// Tools available for the model to use.
+    ///
+    /// List of functions the model can call. Each tool has a name,
+    /// description, and parameter schema. The model will decide when
+    /// to use tools based on the conversation context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tools: Option<Vec<Tool>>,
+
+    /// Controls how the model uses tools.
+    ///
+    /// - "none": Model won't call any tools
+    /// - "auto": Model decides whether to call tools (default)
+    /// - "required": Model must call at least one tool
+    /// - Or specify a particular tool to force its use
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tool_choice: Option<ToolChoice>,
+
+    /// Whether to allow multiple tool calls in parallel.
+    ///
+    /// When true, the model can call multiple tools in a single response.
+    /// Not all providers support parallel tool calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) parallel_tool_calls: Option<bool>,
 }
 
 /// Role of a message sender in a chat conversation.
@@ -106,6 +130,12 @@ pub(crate) enum ChatRole {
     /// Some providers call this "model" instead of "assistant".
     Assistant,
 
+    /// Tool response message.
+    ///
+    /// Contains the result of a tool call execution.
+    /// Links back to a specific tool call via tool_call_id.
+    Tool,
+
     /// Any other role not yet known.
     ///
     /// Captures unknown role values for forward compatibility.
@@ -120,6 +150,7 @@ impl AsRef<str> for ChatRole {
             ChatRole::User => "user",
             ChatRole::System => "system",
             ChatRole::Assistant => "assistant",
+            ChatRole::Tool => "tool",
             ChatRole::Other(s) => s,
         }
     }
@@ -146,7 +177,23 @@ pub(crate) struct ChatMessage {
     /// For user messages: the question or instruction
     /// For assistant messages: the model's response
     /// For system messages: the context or behavior instructions
-    pub(crate) content: String,
+    /// May be None when the message contains only tool calls.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) content: Option<String>,
+
+    /// Tool calls made by the assistant.
+    ///
+    /// When the assistant decides to use tools, this contains
+    /// the list of tool invocations with their arguments.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tool_calls: Option<Vec<ToolCall>>,
+
+    /// ID of the tool call this message is responding to.
+    ///
+    /// Used when role is "tool" to link the response back to
+    /// the specific tool call that generated it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tool_call_id: Option<String>,
 }
 
 /// API object type identifier for OpenAI-compatible responses.
@@ -500,6 +547,57 @@ pub(crate) struct ChatChoiceDelta {
 /// - Tool chunks: Contain `tool_calls` or `function_call` updates
 /// - Final chunk: Often has empty delta (finish_reason is in the choice)
 ///
+/// Type of tool call.
+/// Currently only "function" is supported by OpenAI and other providers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ToolCallType {
+    /// Function tool call - the standard tool call type
+    Function,
+    /// Any other type not yet known (for forward compatibility)
+    #[serde(untagged)]
+    Other(String),
+}
+
+/// Represents a tool call chunk in streaming responses.
+/// Uses untagged enum to match OpenAI's varying chunk formats exactly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum StreamingToolCall {
+    /// First chunk - contains full tool call structure
+    Start {
+        index: usize,
+        id: String,
+        r#type: ToolCallType,
+        function: FunctionStart,
+    },
+    /// Subsequent chunks - only contain incremental arguments
+    Delta { index: usize, function: FunctionDelta },
+}
+
+/// Initial function information in first tool call chunk
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct FunctionStart {
+    pub name: String,
+    pub arguments: String, // Empty string initially
+}
+
+/// Incremental function arguments in subsequent chunks
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct FunctionDelta {
+    pub arguments: String, // Incremental JSON fragment
+}
+
+/// Legacy function call format in streaming (also as untagged enum)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum StreamingFunctionCall {
+    /// First chunk with function name
+    Start { name: String, arguments: String },
+    /// Subsequent chunks with arguments only
+    Delta { arguments: String },
+}
+
 /// ## Content Accumulation
 /// Clients should handle None values and empty strings:
 /// ```ignore
@@ -549,7 +647,7 @@ pub(crate) struct ChatMessageDelta {
     /// ```
     /// Arguments are built incrementally and may be partial JSON until complete.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) tool_calls: Option<Vec<sonic_rs::Value>>,
+    pub(crate) tool_calls: Option<Vec<StreamingToolCall>>,
 
     /// Legacy function calling format (deprecated).
     ///
@@ -567,5 +665,188 @@ pub(crate) struct ChatMessageDelta {
     /// New integrations should use `tool_calls` which supports multiple
     /// parallel function calls and better error handling.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) function_call: Option<sonic_rs::Value>,
+    pub(crate) function_call: Option<StreamingFunctionCall>,
+}
+
+/// Tool definition for function calling.
+///
+/// Defines a tool that the model can use. Currently only "function" type
+/// is supported, but the structure allows for future tool types.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct Tool {
+    /// The type of tool. Currently only "function" is supported.
+    #[serde(rename = "type")]
+    pub(crate) tool_type: ToolCallType,
+
+    /// The function definition.
+    pub(crate) function: FunctionDefinition,
+}
+
+/// Function definition for tool calling.
+///
+/// Describes a function that the model can call, including its name,
+/// description, and parameter schema.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct FunctionDefinition {
+    /// The name of the function to be called.
+    pub(crate) name: String,
+
+    /// A description of what the function does.
+    pub(crate) description: String,
+
+    /// The parameters the function accepts, described as a JSON Schema object.
+    pub(crate) parameters: serde_json::Value,
+}
+
+/// Mode for tool choice behavior.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ToolChoiceMode {
+    /// Model cannot call any tools
+    None,
+    /// Model decides whether to call tools
+    Auto,
+    /// Model must call at least one tool
+    Required,
+    /// Alias for "required" used by some providers
+    #[serde(rename = "any")]
+    Any,
+    /// Any other mode not yet known (for forward compatibility)
+    #[serde(untagged)]
+    Other(String),
+}
+
+/// Controls how the model uses tools.
+///
+/// Can be a mode value ("none", "auto", "required") or a specific tool
+/// to force the model to use.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub(crate) enum ToolChoice {
+    /// Tool choice mode
+    Mode(ToolChoiceMode),
+
+    /// Force a specific tool to be used
+    Specific {
+        #[serde(rename = "type")]
+        tool_type: ToolCallType,
+        function: ToolChoiceFunction,
+    },
+}
+
+/// Specifies a particular function to call.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct ToolChoiceFunction {
+    /// The name of the function to call.
+    pub(crate) name: String,
+}
+
+/// A tool call made by the assistant.
+///
+/// Represents a request from the model to invoke a specific tool
+/// with given arguments.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct ToolCall {
+    /// Unique identifier for this tool call.
+    pub(crate) id: String,
+
+    /// The type of tool. Currently always "function".
+    #[serde(rename = "type")]
+    pub(crate) tool_type: ToolCallType,
+
+    /// The function to call.
+    pub(crate) function: FunctionCall,
+}
+
+/// A function call within a tool call.
+///
+/// Contains the function name and arguments to pass to it.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct FunctionCall {
+    /// The name of the function to call.
+    pub(crate) name: String,
+
+    /// The arguments to call the function with, as a JSON string.
+    pub(crate) arguments: String,
+}
+
+#[cfg(test)]
+mod streaming_tool_call_tests {
+    use super::*;
+    use sonic_rs::JsonValueTrait;
+
+    #[test]
+    fn test_streaming_tool_call_start_serialization() {
+        // Test that the Start variant serializes to the correct OpenAI format
+        let start = StreamingToolCall::Start {
+            index: 0,
+            id: "call_abc123".to_string(),
+            r#type: ToolCallType::Function,
+            function: FunctionStart {
+                name: "get_weather".to_string(),
+                arguments: String::new(),
+            },
+        };
+
+        let json = sonic_rs::to_string(&start).unwrap();
+        let parsed: sonic_rs::Value = sonic_rs::from_str(&json).unwrap();
+
+        // Verify the JSON structure matches OpenAI format
+        assert_eq!(parsed["index"], 0);
+        assert_eq!(parsed["id"], "call_abc123");
+        assert_eq!(parsed["type"], "function");
+        assert_eq!(parsed["function"]["name"], "get_weather");
+        assert_eq!(parsed["function"]["arguments"], "");
+    }
+
+    #[test]
+    fn test_streaming_tool_call_delta_serialization() {
+        // Test that the Delta variant serializes to the correct OpenAI format
+        let delta = StreamingToolCall::Delta {
+            index: 0,
+            function: FunctionDelta {
+                arguments: r#"{"location": "San Francisco"}"#.to_string(),
+            },
+        };
+
+        let json = sonic_rs::to_string(&delta).unwrap();
+        let parsed: sonic_rs::Value = sonic_rs::from_str(&json).unwrap();
+
+        // Verify the JSON structure matches OpenAI format
+        assert_eq!(parsed["index"], 0);
+        assert_eq!(parsed["function"]["arguments"], r#"{"location": "San Francisco"}"#);
+        // Importantly, the "id" and "type" fields should NOT be present in delta chunks
+        assert!(parsed.get("id").is_none());
+        assert!(parsed.get("type").is_none());
+    }
+
+    #[test]
+    fn test_streaming_function_call_start_serialization() {
+        // Test that the Start variant of function call serializes correctly
+        let start = StreamingFunctionCall::Start {
+            name: "get_weather".to_string(),
+            arguments: String::new(),
+        };
+
+        let json = sonic_rs::to_string(&start).unwrap();
+        let parsed: sonic_rs::Value = sonic_rs::from_str(&json).unwrap();
+
+        assert_eq!(parsed["name"], "get_weather");
+        assert_eq!(parsed["arguments"], "");
+    }
+
+    #[test]
+    fn test_streaming_function_call_delta_serialization() {
+        // Test that the Delta variant of function call serializes correctly
+        let delta = StreamingFunctionCall::Delta {
+            arguments: r#"{"location": "San Francisco"}"#.to_string(),
+        };
+
+        let json = sonic_rs::to_string(&delta).unwrap();
+        let parsed: sonic_rs::Value = sonic_rs::from_str(&json).unwrap();
+
+        assert_eq!(parsed["arguments"], r#"{"location": "San Francisco"}"#);
+        // The "name" field should NOT be present in delta chunks
+        assert!(parsed.get("name").is_none());
+    }
 }

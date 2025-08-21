@@ -11,6 +11,7 @@ use axum::{
 };
 use futures::stream;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::net::TcpListener;
 
 use super::common::find_custom_response;
@@ -49,6 +50,16 @@ pub struct OpenAIMock {
     streaming_enabled: bool,
     streaming_chunks: Option<Vec<String>>,
     streaming_error: Option<String>,
+    tool_response: Option<ToolCallResponse>,
+    parallel_tool_calls: Option<Vec<(String, String)>>,
+}
+
+/// Tool call response configuration for testing
+#[derive(Clone)]
+pub struct ToolCallResponse {
+    pub tool_name: String,
+    pub tool_arguments: String,
+    pub finish_reason: String,
 }
 
 #[derive(Clone)]
@@ -77,6 +88,8 @@ impl OpenAIMock {
             streaming_enabled: false,
             streaming_chunks: None,
             streaming_error: None,
+            tool_response: None,
+            parallel_tool_calls: None,
         }
     }
 
@@ -145,6 +158,26 @@ impl OpenAIMock {
         self
     }
 
+    pub fn with_tool_call(mut self, tool_name: impl Into<String>, arguments: impl Into<String>) -> Self {
+        self.tool_response = Some(ToolCallResponse {
+            tool_name: tool_name.into(),
+            tool_arguments: arguments.into(),
+            finish_reason: "tool_calls".to_string(),
+        });
+        self
+    }
+
+    pub fn with_parallel_tool_calls(mut self, tool_calls: Vec<(&str, &str)>) -> Self {
+        // Store parallel tool calls for the response
+        self.parallel_tool_calls = Some(
+            tool_calls
+                .into_iter()
+                .map(|(name, args)| (name.to_string(), args.to_string()))
+                .collect(),
+        );
+        self
+    }
+
     pub fn with_streaming_text_with_newlines(mut self, text: &str) -> Self {
         // Split text to include escape sequences that need to be handled
         let mut chunks = Vec::new();
@@ -165,6 +198,16 @@ impl OpenAIMock {
 
         self.streaming_chunks = Some(chunks);
         self.streaming_enabled = true;
+        self
+    }
+
+    pub fn with_streaming_tool_call(mut self, tool_name: impl Into<String>, arguments: impl Into<String>) -> Self {
+        self.streaming_enabled = true;
+        self.tool_response = Some(ToolCallResponse {
+            tool_name: tool_name.into(),
+            tool_arguments: arguments.into(),
+            finish_reason: "tool_calls".to_string(),
+        });
         self
     }
 }
@@ -194,6 +237,8 @@ impl TestLlmProvider for OpenAIMock {
             streaming_enabled: self.streaming_enabled,
             streaming_chunks: self.streaming_chunks,
             streaming_error: self.streaming_error,
+            tool_response: self.tool_response,
+            parallel_tool_calls: self.parallel_tool_calls,
         });
 
         let app = Router::new()
@@ -253,6 +298,8 @@ struct TestLlmState {
     streaming_enabled: bool,
     streaming_chunks: Option<Vec<String>>,
     streaming_error: Option<String>,
+    tool_response: Option<ToolCallResponse>,
+    parallel_tool_calls: Option<Vec<(String, String)>>,
 }
 
 impl Default for TestLlmState {
@@ -268,6 +315,8 @@ impl Default for TestLlmState {
             streaming_enabled: false,
             streaming_chunks: None,
             streaming_error: None,
+            tool_response: None,
+            parallel_tool_calls: None,
         }
     }
 }
@@ -346,7 +395,8 @@ async fn chat_completions(
         }
 
         let streaming_chunks = state.streaming_chunks.clone();
-        return Ok(generate_streaming_response(request, streaming_chunks).into_response());
+        let tool_response = state.tool_response.clone();
+        return Ok(generate_streaming_response(request, streaming_chunks, tool_response).into_response());
     }
 
     Ok(Json(generate_success_response(request, &state)).into_response())
@@ -356,35 +406,79 @@ async fn chat_completions(
 fn generate_streaming_response(
     request: ChatCompletionRequest,
     streaming_chunks: Option<Vec<String>>,
+    tool_response: Option<ToolCallResponse>,
 ) -> Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>> + 'static> {
     let model = request.model.clone();
 
     let mut events = Vec::new();
 
-    // Note: streaming_error is handled at HTTP level, not in streaming chunks
-    let chunks = streaming_chunks.unwrap_or_else(|| vec!["Why don't scientists trust atoms? ".to_string()]);
+    // Check if this is a tool call streaming response
+    if request.tools.is_some() {
+        if let Some(tool) = tool_response {
+            let id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
 
-    let first_chunk = serde_json::json!({
-        "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
-        "object": "chat.completion.chunk",
-        "created": 1677651200,
-        "model": &model,
-        "choices": [{
-            "index": 0,
-            "delta": {
-                "role": "assistant",
-                "content": chunks[0]
-            },
-            "finish_reason": null,
-            "logprobs": null
-        }],
-        "system_fingerprint": null,
-        "usage": null
-    });
-    events.push(Event::default().data(serde_json::to_string(&first_chunk).unwrap()));
+            // First chunk: role
+            let first_chunk = serde_json::json!({
+                "id": &id,
+                "object": "chat.completion.chunk",
+                "created": 1677651200,
+                "model": &model,
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant"
+                    }
+                }]
+            });
+            events.push(Event::default().data(serde_json::to_string(&first_chunk).unwrap()));
 
-    for chunk_text in chunks.iter().skip(1) {
-        let chunk = serde_json::json!({
+            // Second chunk: tool call with arguments
+            let tool_chunk = serde_json::json!({
+                "id": &id,
+                "object": "chat.completion.chunk",
+                "created": 1677651200,
+                "model": &model,
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": format!("call_{}", uuid::Uuid::new_v4()),
+                            "type": "function",
+                            "function": {
+                                "name": tool.tool_name,
+                                "arguments": tool.tool_arguments
+                            }
+                        }]
+                    }
+                }]
+            });
+            events.push(Event::default().data(serde_json::to_string(&tool_chunk).unwrap()));
+
+            // Final chunk with finish reason
+            let final_chunk = serde_json::json!({
+                "id": &id,
+                "object": "chat.completion.chunk",
+                "created": 1677651200,
+                "model": &model,
+                "choices": [{
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "tool_calls"
+                }],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 15,
+                    "total_tokens": 25
+                }
+            });
+            events.push(Event::default().data(serde_json::to_string(&final_chunk).unwrap()));
+        }
+    } else {
+        // Regular text streaming
+        let chunks = streaming_chunks.unwrap_or_else(|| vec!["Why don't scientists trust atoms? ".to_string()]);
+
+        let first_chunk = serde_json::json!({
             "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
             "object": "chat.completion.chunk",
             "created": 1677651200,
@@ -392,7 +486,8 @@ fn generate_streaming_response(
             "choices": [{
                 "index": 0,
                 "delta": {
-                    "content": chunk_text
+                    "role": "assistant",
+                    "content": chunks[0]
                 },
                 "finish_reason": null,
                 "logprobs": null
@@ -400,28 +495,48 @@ fn generate_streaming_response(
             "system_fingerprint": null,
             "usage": null
         });
-        events.push(Event::default().data(serde_json::to_string(&chunk).unwrap()));
-    }
+        events.push(Event::default().data(serde_json::to_string(&first_chunk).unwrap()));
 
-    let final_chunk = serde_json::json!({
-        "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
-        "object": "chat.completion.chunk",
-        "created": 1677651200,
-        "model": &model,
-        "choices": [{
-            "index": 0,
-            "delta": {},
-            "finish_reason": "stop",
-            "logprobs": null
-        }],
-        "system_fingerprint": null,
-        "usage": {
-            "prompt_tokens": 10,
-            "completion_tokens": 15,
-            "total_tokens": 25
+        for chunk_text in chunks.iter().skip(1) {
+            let chunk = serde_json::json!({
+                "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
+                "object": "chat.completion.chunk",
+                "created": 1677651200,
+                "model": &model,
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "content": chunk_text
+                    },
+                    "finish_reason": null,
+                    "logprobs": null
+                }],
+                "system_fingerprint": null,
+                "usage": null
+            });
+            events.push(Event::default().data(serde_json::to_string(&chunk).unwrap()));
         }
-    });
-    events.push(Event::default().data(serde_json::to_string(&final_chunk).unwrap()));
+
+        let final_chunk = serde_json::json!({
+            "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
+            "object": "chat.completion.chunk",
+            "created": 1677651200,
+            "model": &model,
+            "choices": [{
+                "index": 0,
+                "delta": {},
+                "finish_reason": "stop",
+                "logprobs": null
+            }],
+            "system_fingerprint": null,
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 15,
+                "total_tokens": 25
+            }
+        });
+        events.push(Event::default().data(serde_json::to_string(&final_chunk).unwrap()));
+    }
 
     events.push(Event::default().data("[DONE]"));
 
@@ -430,21 +545,102 @@ fn generate_streaming_response(
 }
 
 fn generate_success_response(request: ChatCompletionRequest, state: &TestLlmState) -> ChatCompletionResponse {
-    let response_text = find_custom_response(&request.messages, &state.custom_responses, |m| &m.content)
-        .unwrap_or_else(|| {
-            if request.messages.iter().any(|m| m.content.contains("error")) {
-                "This is an error response for testing".to_string()
-            } else if request.messages.iter().any(|m| m.content.contains("Hello")) {
-                "Hello! I'm a test LLM assistant. How can I help you today?".to_string()
+    // Check if we should return parallel tool calls
+    if request.tools.is_some() && state.parallel_tool_calls.is_some() {
+        let parallel_calls = state.parallel_tool_calls.as_ref().unwrap();
+        let tool_calls = parallel_calls
+            .iter()
+            .map(|(name, args)| ToolCall {
+                id: format!("call_{}", uuid::Uuid::new_v4()),
+                type_: "function".to_string(),
+                function: FunctionCall {
+                    name: name.clone(),
+                    arguments: args.clone(),
+                },
+            })
+            .collect();
+
+        return ChatCompletionResponse {
+            id: format!("chatcmpl-test-{}", uuid::Uuid::new_v4()),
+            object: "chat.completion".to_string(),
+            created: 1677651200,
+            model: request.model.clone(),
+            choices: vec![ChatChoice {
+                index: 0,
+                message: ChatMessage {
+                    role: "assistant".to_string(),
+                    content: None,
+                    tool_calls: Some(tool_calls),
+                    tool_call_id: None,
+                },
+                finish_reason: "tool_calls".to_string(),
+            }],
+            usage: Usage {
+                prompt_tokens: 10,
+                completion_tokens: 15,
+                total_tokens: 25,
+            },
+        };
+    }
+
+    // Check if we should return a single tool call response
+    if request.tools.is_some() && state.tool_response.is_some() {
+        let tool_response = state.tool_response.as_ref().unwrap();
+        return ChatCompletionResponse {
+            id: format!("chatcmpl-test-{}", uuid::Uuid::new_v4()),
+            object: "chat.completion".to_string(),
+            created: 1677651200,
+            model: request.model.clone(),
+            choices: vec![ChatChoice {
+                index: 0,
+                message: ChatMessage {
+                    role: "assistant".to_string(),
+                    content: None,
+                    tool_calls: Some(vec![ToolCall {
+                        id: format!("call_{}", uuid::Uuid::new_v4()),
+                        type_: "function".to_string(),
+                        function: FunctionCall {
+                            name: tool_response.tool_name.clone(),
+                            arguments: tool_response.tool_arguments.clone(),
+                        },
+                    }]),
+                    tool_call_id: None,
+                },
+                finish_reason: tool_response.finish_reason.clone(),
+            }],
+            usage: Usage {
+                prompt_tokens: 10,
+                completion_tokens: 15,
+                total_tokens: 25,
+            },
+        };
+    }
+
+    let response_text = find_custom_response(&request.messages, &state.custom_responses, |m| {
+        m.content.as_deref().unwrap_or("")
+    })
+    .unwrap_or_else(|| {
+        if request
+            .messages
+            .iter()
+            .any(|m| m.content.as_ref().is_some_and(|c| c.contains("error")))
+        {
+            "This is an error response for testing".to_string()
+        } else if request
+            .messages
+            .iter()
+            .any(|m| m.content.as_ref().is_some_and(|c| c.contains("Hello")))
+        {
+            "Hello! I'm a test LLM assistant. How can I help you today?".to_string()
+        } else {
+            // Include temperature in response if it was high
+            if request.temperature.unwrap_or(0.0) > 1.5 {
+                "This is a creative response due to high temperature".to_string()
             } else {
-                // Include temperature in response if it was high
-                if request.temperature.unwrap_or(0.0) > 1.5 {
-                    "This is a creative response due to high temperature".to_string()
-                } else {
-                    "This is a test response from the mock LLM server".to_string()
-                }
+                "This is a test response from the mock LLM server".to_string()
             }
-        });
+        }
+    });
 
     ChatCompletionResponse {
         id: format!("chatcmpl-test-{}", uuid::Uuid::new_v4()),
@@ -455,7 +651,9 @@ fn generate_success_response(request: ChatCompletionRequest, state: &TestLlmStat
             index: 0,
             message: ChatMessage {
                 role: "assistant".to_string(),
-                content: response_text,
+                content: Some(response_text),
+                tool_calls: None,
+                tool_call_id: None,
             },
             finish_reason: "stop".to_string(),
         }],
@@ -542,6 +740,14 @@ struct ChatCompletionRequest {
     stop: Option<Vec<String>>,
     #[serde(default)]
     stream: Option<bool>,
+    #[serde(default)]
+    tools: Option<Vec<Value>>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    tool_choice: Option<Value>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    parallel_tool_calls: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -564,7 +770,26 @@ struct ChatChoice {
 #[derive(Debug, Deserialize, Serialize)]
 struct ChatMessage {
     role: String,
-    content: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    tool_call_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    type_: String,
+    function: FunctionCall,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FunctionCall {
+    name: String,
+    arguments: String,
 }
 
 #[derive(Debug, Serialize)]

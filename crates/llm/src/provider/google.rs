@@ -119,6 +119,7 @@ impl Provider for GoogleProvider {
         // First get the response as text to log if parsing fails
         let response_text = response.text().await.map_err(|e| {
             log::error!("Failed to read Google response body: {e}");
+
             LlmError::InternalError(None)
         })?;
 
@@ -126,6 +127,7 @@ impl Provider for GoogleProvider {
         let google_response: GoogleGenerateResponse = sonic_rs::from_str(&response_text).map_err(|e| {
             log::error!("Failed to parse Google chat completion response: {e}");
             log::error!("Raw response that failed to parse: {response_text}");
+
             LlmError::InternalError(None)
         })?;
 
@@ -215,7 +217,7 @@ impl Provider for GoogleProvider {
                 };
 
                 let Ok(chunk) = sonic_rs::from_str::<GoogleStreamChunk<'_>>(&event.data) else {
-                    log::warn!("Failed to parse Google streaming chunk");
+                    log::warn!("Failed to parse Google streaming chunk: {}", event.data);
                     return None;
                 };
 

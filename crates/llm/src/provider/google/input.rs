@@ -1,7 +1,7 @@
 use serde::Serialize;
 
-use super::output::{GoogleContent, GooglePart};
-use crate::messages::{ChatCompletionRequest, ChatRole};
+use super::output::{GoogleContent, GoogleFunctionCall, GoogleFunctionResponse, GooglePart, GoogleRole};
+use crate::messages::{ChatCompletionRequest, ChatRole, Tool, ToolChoice, ToolChoiceMode};
 
 /// Request body for Google Gemini GenerateContent API.
 ///
@@ -138,7 +138,42 @@ pub(super) struct GoogleFunctionDeclaration {
     description: Option<String>,
 
     /// The parameters of this function in JSON Schema format.
-    parameters: Option<sonic_rs::Value>,
+    parameters: Option<serde_json::Value>,
+}
+
+impl From<Tool> for GoogleFunctionDeclaration {
+    fn from(tool: Tool) -> Self {
+        Self {
+            name: tool.function.name,
+            description: Some(tool.function.description),
+            parameters: Some(tool.function.parameters),
+        }
+    }
+}
+
+/// Google's function calling mode.
+///
+/// Controls how the model interacts with available functions.
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub(super) enum GoogleFunctionCallingMode {
+    /// Model cannot call functions
+    None,
+    /// Model decides whether to call functions
+    Auto,
+    /// Model must call at least one function
+    Any,
+}
+
+impl From<ToolChoiceMode> for GoogleFunctionCallingMode {
+    fn from(mode: ToolChoiceMode) -> Self {
+        match mode {
+            ToolChoiceMode::None => GoogleFunctionCallingMode::None,
+            ToolChoiceMode::Auto => GoogleFunctionCallingMode::Auto,
+            ToolChoiceMode::Required | ToolChoiceMode::Any => GoogleFunctionCallingMode::Any,
+            ToolChoiceMode::Other(_) => GoogleFunctionCallingMode::Auto, // Default to auto for unknown
+        }
+    }
 }
 
 /// Configuration for function calling behavior.
@@ -156,12 +191,7 @@ pub(super) struct GoogleToolConfig {
 #[serde(rename_all = "camelCase")]
 pub(super) struct GoogleFunctionCallingConfig {
     /// The mode of function calling.
-    ///
-    /// Values include:
-    /// - AUTO: Model decides whether to call functions
-    /// - ANY: Model is forced to call at least one function
-    /// - NONE: Model cannot call functions
-    mode: String,
+    mode: GoogleFunctionCallingMode,
 
     /// List of function names the model is allowed to call.
     /// If empty, the model can call any provided function.
@@ -173,40 +203,188 @@ impl From<ChatCompletionRequest> for GoogleGenerateRequest {
         let mut google_contents = Vec::new();
         let mut system_instruction = None;
 
+        // Track tool calls from assistant messages to map tool_call_id to function names
+        let mut tool_call_mapping: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+        // Extract tools and tool_choice before consuming request
+        let tools = request.tools.map(|tools| {
+            vec![GoogleTool {
+                function_declarations: Some(tools.into_iter().map(GoogleFunctionDeclaration::from).collect()),
+            }]
+        });
+
+        let tool_config = request.tool_choice.map(|choice| {
+            let (mode, allowed_names) = match choice {
+                ToolChoice::Mode(mode) => (GoogleFunctionCallingMode::from(mode), None),
+                ToolChoice::Specific { function, .. } => (GoogleFunctionCallingMode::Any, Some(vec![function.name])),
+            };
+
+            GoogleToolConfig {
+                function_calling_config: Some(GoogleFunctionCallingConfig {
+                    mode,
+                    allowed_function_names: allowed_names,
+                }),
+            }
+        });
+
         for msg in request.messages {
-            match &msg.role {
+            match msg.role {
                 ChatRole::System => {
                     // Google uses systemInstruction for system messages
                     system_instruction = Some(GoogleContent {
                         parts: vec![GooglePart {
-                            text: Some(msg.content),
+                            text: Some(msg.content.unwrap_or_default()),
+                            function_call: None,
+                            function_response: None,
                         }],
-                        role: "user".to_string(), // System instruction role is typically "user"
+                        role: GoogleRole::User, // System instruction role is typically "user"
                     });
                 }
                 ChatRole::User => {
                     google_contents.push(GoogleContent {
                         parts: vec![GooglePart {
-                            text: Some(msg.content),
+                            text: Some(msg.content.unwrap_or_default()),
+                            function_call: None,
+                            function_response: None,
                         }],
-                        role: "user".to_string(),
+                        role: GoogleRole::User,
                     });
                 }
                 ChatRole::Assistant => {
-                    google_contents.push(GoogleContent {
-                        parts: vec![GooglePart {
-                            text: Some(msg.content),
-                        }],
-                        role: "model".to_string(), // Google uses "model" instead of "assistant"
-                    });
+                    let mut parts = Vec::new();
+
+                    // Add text content if present
+                    if let Some(content) = msg.content
+                        && !content.is_empty()
+                    {
+                        parts.push(GooglePart {
+                            text: Some(content),
+                            function_call: None,
+                            function_response: None,
+                        });
+                    }
+
+                    // Add tool calls if present
+                    if let Some(tool_calls) = msg.tool_calls {
+                        for tool_call in tool_calls {
+                            // Parse arguments as JSON
+                            let args = serde_json::from_str(&tool_call.function.arguments)
+                                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+                            // Store the mapping from tool_call_id to function name
+                            // We need to clone the name here since we're moving it into GoogleFunctionCall below
+                            tool_call_mapping.insert(tool_call.id, tool_call.function.name.clone());
+
+                            parts.push(GooglePart {
+                                text: None,
+                                function_call: Some(GoogleFunctionCall {
+                                    name: tool_call.function.name,
+                                    args,
+                                }),
+                                function_response: None,
+                            });
+                        }
+                    }
+
+                    // Only add if we have parts
+                    if !parts.is_empty() {
+                        google_contents.push(GoogleContent {
+                            parts,
+                            role: GoogleRole::Model, // Google uses "model" instead of "assistant"
+                        });
+                    }
+                }
+                ChatRole::Tool => {
+                    // Convert tool response to Google's function response format
+                    if let Some(tool_call_id) = msg.tool_call_id {
+                        // Look up the function name from our mapping
+                        let function_name = tool_call_mapping.get(&tool_call_id)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                log::warn!("Could not find function name for tool_call_id: {tool_call_id}, using 'unknown_function'");
+                                "unknown_function".to_string()
+                            });
+
+                        let response_content = msg.content.unwrap_or_default();
+
+                        // Google's API requires function_response.response to be a JSON object
+                        // Parse response as JSON and ensure it's an object
+                        let response_value = match serde_json::from_str::<serde_json::Value>(&response_content) {
+                            Ok(value) if value.is_object() => {
+                                // Already a JSON object, use as-is
+                                log::debug!("Tool response is already a JSON object: {value}");
+                                value
+                            }
+                            Ok(value) => {
+                                // Valid JSON but not an object (string, number, array, etc.)
+                                log::debug!(
+                                    "Tool response is JSON but not an object (type: {}), wrapping it",
+                                    if value.is_string() {
+                                        "string"
+                                    } else if value.is_number() {
+                                        "number"
+                                    } else if value.is_array() {
+                                        "array"
+                                    } else if value.is_boolean() {
+                                        "boolean"
+                                    } else {
+                                        "null"
+                                    }
+                                );
+                                serde_json::json!({
+                                    "result": response_content
+                                })
+                            }
+                            Err(e) => {
+                                // Not valid JSON at all
+                                log::debug!("Tool response is not valid JSON ({e}), wrapping as string");
+                                serde_json::json!({
+                                    "result": response_content
+                                })
+                            }
+                        };
+
+                        let function_response = GoogleFunctionResponse {
+                            name: function_name.clone(),
+                            response: response_value,
+                        };
+
+                        log::debug!(
+                            "Creating function response for '{}': {:?}",
+                            function_name,
+                            serde_json::to_string(&function_response.response)
+                                .unwrap_or_else(|_| "serialization failed".to_string())
+                        );
+
+                        google_contents.push(GoogleContent {
+                            parts: vec![GooglePart {
+                                text: None,
+                                function_call: None,
+                                function_response: Some(function_response),
+                            }],
+                            role: GoogleRole::User, // Function responses are sent as user messages
+                        });
+                    } else {
+                        log::warn!("Tool message missing tool_call_id, treating as regular user message");
+                        google_contents.push(GoogleContent {
+                            parts: vec![GooglePart {
+                                text: Some(msg.content.unwrap_or_default()),
+                                function_call: None,
+                                function_response: None,
+                            }],
+                            role: GoogleRole::User,
+                        });
+                    }
                 }
                 ChatRole::Other(role) => {
                     log::warn!("Unknown chat role from request: {role}, treating as user");
                     google_contents.push(GoogleContent {
                         parts: vec![GooglePart {
-                            text: Some(msg.content),
+                            text: Some(msg.content.unwrap_or_default()),
+                            function_call: None,
+                            function_response: None,
                         }],
-                        role: "user".to_string(),
+                        role: GoogleRole::User,
                     });
                 }
             }
@@ -227,8 +405,8 @@ impl From<ChatCompletionRequest> for GoogleGenerateRequest {
             contents: google_contents,
             generation_config: Some(generation_config),
             safety_settings: None,
-            tools: None,
-            tool_config: None,
+            tools,
+            tool_config,
             system_instruction,
         }
     }

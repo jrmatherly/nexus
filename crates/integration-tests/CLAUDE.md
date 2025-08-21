@@ -52,10 +52,10 @@ pub struct TestServer {
 impl TestServer {
     // Create a builder for complex setups with downstream services
     pub fn builder() -> TestServerBuilder;
-    
+
     // Create MCP client that connects to the server's MCP endpoint
     pub async fn mcp_client(&self, path: &str) -> McpTestClient;
-    
+
     // Create MCP client with OAuth2 authentication
     pub async fn mcp_client_with_auth(&self, path: &str, token: &str) -> McpTestClient;
 }
@@ -76,13 +76,13 @@ HTTP client for making REST API requests:
 impl TestClient {
     // GET request to a path
     pub async fn get(&self, path: &str) -> reqwest::Response;
-    
+
     // POST request with JSON body
     pub async fn post<T: Serialize>(&self, path: &str, body: &T) -> reqwest::Response;
-    
+
     // Custom request builder for advanced scenarios (CORS, headers, etc.)
     pub fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder;
-    
+
     // GET request that returns Result (for testing error cases)
     pub async fn try_get(&self, path: &str) -> reqwest::Result<reqwest::Response>;
 }
@@ -101,31 +101,31 @@ MCP protocol client for testing MCP-specific functionality:
 impl McpTestClient {
     // Get server information (name, version, instructions)
     pub fn get_server_info(&self) -> &InitializeResult;
-    
+
     // List all available tools
     pub async fn list_tools(&self) -> ListToolsResult;
-    
+
     // Search for tools by keywords
     pub async fn search(&self, keywords: &[&str]) -> Vec<serde_json::Value>;
-    
+
     // Execute a tool with arguments
     pub async fn execute(&self, tool: &str, arguments: Value) -> CallToolResult;
-    
+
     // Execute a tool expecting an error
     pub async fn execute_expect_error(&self, tool: &str, arguments: Value) -> ServiceError;
-    
+
     // List available prompts
     pub async fn list_prompts(&self) -> ListPromptsResult;
-    
+
     // Get a specific prompt
     pub async fn get_prompt(&self, name: &str, arguments: Option<Map>) -> GetPromptResult;
-    
+
     // List available resources
     pub async fn list_resources(&self) -> ListResourcesResult;
-    
+
     // Read a resource by URI
     pub async fn read_resource(&self, uri: &str) -> ReadResourceResult;
-    
+
     // Disconnect and cleanup
     pub async fn disconnect(self);
 }
@@ -145,7 +145,7 @@ Builder for complex test scenarios with multiple downstream services:
 impl TestServerBuilder {
     // Add a downstream MCP service
     pub async fn spawn_service(&mut self, service: TestService);
-    
+
     // Build the TestServer with the given base configuration
     pub async fn build(self, config: &str) -> TestServer;
 }
@@ -163,7 +163,7 @@ impl TestServerBuilder {
 
 #### When to Use Insta Snapshots (REQUIRED):
 - JSON response bodies
-- Complex objects with multiple fields  
+- Complex objects with multiple fields
 - Arrays or collections of data
 - Any structured output
 - Error response formats
@@ -178,10 +178,10 @@ impl TestServerBuilder {
 #[tokio::test]
 async fn test_llm_response() {
     let response = llm.simple_completion("gpt-4", "Hello").await;
-    
+
     // OK: Simple status check
     assert_eq!(response.status(), 200);
-    
+
     // REQUIRED: Use insta for JSON body
     insta::assert_json_snapshot!(response, {
         ".id" => "[id]",
@@ -259,22 +259,22 @@ The `TestService` represents a mock MCP server for testing:
 impl TestService {
     // Create SSE transport service
     pub fn sse(name: String) -> Self;
-    
+
     // Create streamable HTTP transport service
     pub fn streamable_http(name: String) -> Self;
-    
+
     // Create service with auto-detected transport
     pub fn sse_autodetect(name: String) -> Self;
-    
+
     // Add a tool to this service
     pub fn add_tool(&mut self, tool: impl TestTool + 'static);
-    
+
     // Enable TLS for this service
     pub fn with_tls(&mut self) -> &mut Self;
-    
+
     // Set authentication token
     pub fn with_auth_token(&mut self, token: String) -> &mut Self;
-    
+
     // Enable auth forwarding
     pub fn with_auth_forwarding(&mut self) -> &mut Self;
 }
@@ -437,12 +437,12 @@ services:
     ports:
       - "4444:4444"  # Public API
       - "4445:4445"  # Admin API
-  
+
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"  # Redis for rate limiting tests
-  
+
   redis-tls:
     image: redis:7-alpine
     ports:
@@ -523,40 +523,40 @@ async fn complete_test_example() {
     let mut math_service = TestService::sse("math_server".to_string());
     math_service.add_tool(AdderTool);
     math_service.add_tool(CalculatorTool);
-    
+
     // 2. Configure with TOML string (MANDATORY)
     let config = indoc! {r#"
         [server]
         host = "127.0.0.1"
         port = 0  # Always use 0 for automatic port assignment
-        
+
         [mcp]
         enabled = true
-        
+
         # Can also configure STDIO servers
         [mcp.servers.python_tools]
         cmd = ["python3", "mock-mcp-servers/tools.py"]
     "#};
-    
+
     // 3. Build server with downstream services
     let mut builder = TestServer::builder();
     builder.spawn_service(math_service).await;
     let server = builder.build(config).await;
-    
+
     // 4. Test HTTP endpoints
     let response = server.client.get("/health").await;
     assert_eq!(response.status(), 200);
-    
+
     let body = response.text().await.unwrap();
     insta::assert_snapshot!(body, @r#"{"status":"healthy"}"#);
-    
+
     // 5. Test MCP functionality
     let mcp = server.mcp_client("/mcp").await;
-    
+
     // Get server info
     let info = mcp.get_server_info();
     insta::assert_snapshot!(info.server_info.name, @"Tool Aggregator (math_server, python_tools)");
-    
+
     // Search for tools
     let results = mcp.search(&["add", "calculator"]).await;
     insta::assert_json_snapshot!(results, @r#"
@@ -567,19 +567,19 @@ async fn complete_test_example() {
         "score": 4.5
       },
       {
-        "name": "math_server__calculator", 
+        "name": "math_server__calculator",
         "description": "Basic calculator operations",
         "score": 3.2
       }
     ]
     "#);
-    
+
     // Execute a tool
     let result = mcp.execute(
         "math_server__adder",
         json!({ "a": 5, "b": 3 })
     ).await;
-    
+
     insta::assert_json_snapshot!(result, @r#"
     {
       "content": [{
@@ -588,7 +588,7 @@ async fn complete_test_example() {
       }]
     }
     "#);
-    
+
     // 6. Cleanup happens automatically
     mcp.disconnect().await;
 }
@@ -669,7 +669,7 @@ The AWS Bedrock live tests are located in `tests/llm/bedrock/live.rs` and requir
 ```bash
 # Set required environment variables once
 export BEDROCK_LIVE_TESTS=true
-export AWS_PROFILE=your-profile  # or use AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+export AWS_PROFILE=sandbox
 
 # Now you can run tests without repeating the environment variable
 
@@ -707,18 +707,18 @@ use integration_test_macros::live_provider_test;
 async fn anthropic_claude_instant_minimal() {
     // This test becomes: live_bedrock_anthropic_claude_instant_minimal
     // Only runs when BEDROCK_LIVE_TESTS=true
-    
+
     let config = create_bedrock_config(&[("claude-instant", "anthropic.claude-instant-v1")]);
     let server = TestServer::builder().build(&config).await;
     let llm = server.llm_client("/llm");
-    
+
     let response = llm.completions(json!({
         "model": "bedrock/claude-instant",
         "messages": [{"role": "user", "content": "Say yes"}],
         "max_tokens": 10,
         "temperature": 0
     })).await;
-    
+
     // Test assertions...
 }
 ```
@@ -796,17 +796,17 @@ async fn new_provider_model_minimal() {
     let config = create_bedrock_config(&[
         ("model-alias", "provider.actual-model-id-v1:0")
     ]);
-    
+
     let server = TestServer::builder().build(&config).await;
     let llm = server.llm_client("/llm");
-    
+
     let response = llm.completions(json!({
         "model": "bedrock/model-alias",
         "messages": [{"role": "user", "content": "Reply: ok"}],
         "max_tokens": 10,
         "temperature": 0
     })).await;
-    
+
     insta::assert_json_snapshot!(response, {
         ".id" => "[id]",
         ".created" => "[timestamp]",

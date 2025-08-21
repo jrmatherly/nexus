@@ -11,7 +11,6 @@ use axum::{
     routing::{get, post},
 };
 use futures::stream;
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
@@ -25,6 +24,9 @@ pub struct GoogleMock {
     custom_responses: HashMap<String, String>,
     streaming_enabled: bool,
     streaming_chunks: Option<Vec<String>>,
+    tool_calls: Vec<(String, String)>, // (function_name, arguments)
+    parallel_tool_calls: Vec<(String, String)>,
+    streaming_tool_calls: Option<(String, String)>,
 }
 
 impl GoogleMock {
@@ -40,6 +42,9 @@ impl GoogleMock {
             custom_responses: HashMap::new(),
             streaming_enabled: false,
             streaming_chunks: None,
+            tool_calls: Vec::new(),
+            parallel_tool_calls: Vec::new(),
+            streaming_tool_calls: None,
         }
     }
 
@@ -86,6 +91,25 @@ impl GoogleMock {
         self.streaming_enabled = true;
         self
     }
+
+    pub fn with_tool_call(mut self, function_name: &str, arguments: &str) -> Self {
+        self.tool_calls.push((function_name.to_string(), arguments.to_string()));
+        self
+    }
+
+    pub fn with_parallel_tool_calls(mut self, calls: Vec<(&str, &str)>) -> Self {
+        self.parallel_tool_calls = calls
+            .into_iter()
+            .map(|(name, args)| (name.to_string(), args.to_string()))
+            .collect();
+        self
+    }
+
+    pub fn with_streaming_tool_call(mut self, function_name: &str, arguments: &str) -> Self {
+        self.streaming_tool_calls = Some((function_name.to_string(), arguments.to_string()));
+        self.streaming_enabled = true;
+        self
+    }
 }
 
 impl TestLlmProvider for GoogleMock {
@@ -109,6 +133,9 @@ impl TestLlmProvider for GoogleMock {
             custom_responses: self.custom_responses,
             streaming_enabled: self.streaming_enabled,
             streaming_chunks: self.streaming_chunks,
+            tool_calls: self.tool_calls,
+            parallel_tool_calls: self.parallel_tool_calls,
+            streaming_tool_calls: self.streaming_tool_calls,
         });
 
         let app = Router::new()
@@ -141,6 +168,9 @@ struct TestGoogleState {
     custom_responses: HashMap<String, String>,
     streaming_enabled: bool,
     streaming_chunks: Option<Vec<String>>,
+    tool_calls: Vec<(String, String)>,
+    parallel_tool_calls: Vec<(String, String)>,
+    streaming_tool_calls: Option<(String, String)>,
 }
 
 /// Legacy compatibility server
@@ -193,13 +223,81 @@ async fn generate_content(
             .into_response();
     }
 
-    // Extract text from contents
-    let user_text = request
-        .contents
-        .iter()
-        .filter_map(|content| content.parts.iter().find_map(|part| part.text.as_ref()))
-        .cloned()
-        .join(" ");
+    // Extract text from contents (including function responses)
+    let mut extracted_texts = Vec::new();
+    for content in &request.contents {
+        for part in &content.parts {
+            if let Some(text) = &part.text {
+                extracted_texts.push(text.clone());
+            }
+            // Also check function response content for matching
+            if let Some(function_response) = &part.function_response {
+                // Handle both string responses and object-wrapped responses
+                if let Some(response_text) = function_response.response.as_str() {
+                    extracted_texts.push(response_text.to_string());
+                } else if let Some(obj) = function_response.response.as_object() {
+                    // If it's wrapped in an object with a "result" field, extract that
+                    if let Some(result) = obj.get("result").and_then(|v| v.as_str()) {
+                        extracted_texts.push(result.to_string());
+                    }
+                }
+            }
+        }
+    }
+    let user_text = extracted_texts.join(" ");
+
+    // Check if we should return a tool call
+    let should_use_tools =
+        !state.tool_calls.is_empty() || !state.parallel_tool_calls.is_empty() || state.streaming_tool_calls.is_some();
+
+    if should_use_tools && request.tools.is_some() {
+        // Generate tool call response
+        let tool_calls = if !state.parallel_tool_calls.is_empty() {
+            &state.parallel_tool_calls
+        } else {
+            &state.tool_calls
+        };
+
+        if is_streaming && let Some((name, args)) = &state.streaming_tool_calls {
+            let model = path.split(':').next().unwrap_or("unknown");
+            return generate_google_streaming_tool_response(model.to_string(), name.clone(), args.clone())
+                .into_response();
+        }
+
+        let mut parts = Vec::new();
+        for (function_name, arguments) in tool_calls {
+            let args: serde_json::Value = serde_json::from_str(arguments)
+                .unwrap_or_else(|_| serde_json::json!({"error": "Failed to parse arguments"}));
+
+            parts.push(GooglePart {
+                text: None,
+                function_call: Some(GoogleFunctionCall {
+                    name: function_name.clone(),
+                    args,
+                }),
+                function_response: None,
+            });
+        }
+
+        let response = GoogleGenerateResponse {
+            candidates: vec![GoogleCandidate {
+                content: GoogleContent {
+                    parts,
+                    role: "model".to_string(),
+                },
+                finish_reason: "STOP".to_string(),
+                index: 0,
+                safety_ratings: vec![],
+            }],
+            usage_metadata: GoogleUsageMetadata {
+                prompt_token_count: 10,
+                candidates_token_count: 15,
+                total_token_count: 25,
+            },
+        };
+
+        return (StatusCode::OK, Json(response)).into_response();
+    }
 
     // Check for custom responses
     let response_text = find_custom_response_in_text(&user_text, &state.custom_responses);
@@ -240,6 +338,8 @@ async fn generate_content(
             content: GoogleContent {
                 parts: vec![GooglePart {
                     text: Some(response_text),
+                    function_call: None,
+                    function_response: None,
                 }],
                 role: "model".to_string(),
             },
@@ -332,6 +432,67 @@ fn generate_google_streaming_response(
     Sse::new(stream)
 }
 
+/// Generate SSE streaming response for Google tool calls
+fn generate_google_streaming_tool_response(
+    model: String,
+    function_name: String,
+    arguments: String,
+) -> axum::response::Sse<
+    impl futures::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>> + 'static,
+> {
+    let mut events = Vec::new();
+
+    // First chunk with function call
+    let args: serde_json::Value =
+        serde_json::from_str(&arguments).unwrap_or_else(|_| serde_json::json!({"error": "Failed to parse arguments"}));
+
+    let tool_chunk = serde_json::json!({
+        "candidates": [{
+            "content": {
+                "parts": [{
+                    "functionCall": {
+                        "name": function_name.clone(),
+                        "args": args
+                    }
+                }],
+                "role": "model"
+            },
+            "index": 0
+        }],
+        "modelVersion": model.clone()
+    });
+    events.push(axum::response::sse::Event::default().data(serde_json::to_string(&tool_chunk).unwrap()));
+
+    // Final chunk with finish reason and empty function call to maintain tool call context
+    let final_chunk = serde_json::json!({
+        "candidates": [{
+            "content": {
+                "parts": [{
+                    "functionCall": {
+                        "name": function_name,
+                        "args": {}
+                    }
+                }],
+                "role": "model"
+            },
+            "finishReason": "STOP",
+            "index": 0
+        }],
+        "usageMetadata": {
+            "promptTokenCount": 10,
+            "candidatesTokenCount": 15,
+            "totalTokenCount": 25
+        },
+        "modelVersion": model
+    });
+    events.push(axum::response::sse::Event::default().data(serde_json::to_string(&final_chunk).unwrap()));
+
+    events.push(axum::response::sse::Event::default().data("[DONE]"));
+
+    let stream = futures::stream::iter(events.into_iter().map(Ok));
+    axum::response::Sse::new(stream)
+}
+
 // Google API types based on the Gemini API specification
 
 #[derive(Debug, Deserialize)]
@@ -358,6 +519,22 @@ struct GoogleContent {
 #[derive(Debug, Deserialize, Serialize)]
 struct GooglePart {
     text: Option<String>,
+    #[serde(rename = "functionCall")]
+    function_call: Option<GoogleFunctionCall>,
+    #[serde(rename = "functionResponse")]
+    function_response: Option<GoogleFunctionResponse>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct GoogleFunctionCall {
+    name: String,
+    args: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct GoogleFunctionResponse {
+    name: String,
+    response: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]

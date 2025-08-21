@@ -1,3 +1,5 @@
+mod tools;
+
 use indoc::indoc;
 use integration_tests::{TestServer, llms::OpenAIMock};
 use serde_json::json;

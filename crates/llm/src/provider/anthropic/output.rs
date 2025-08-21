@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::messages::{
     ChatChoice, ChatChoiceDelta, ChatCompletionChunk, ChatCompletionResponse, ChatMessage, ChatMessageDelta, ChatRole,
-    FinishReason, ObjectType, Usage,
+    FinishReason, FunctionDelta, FunctionStart, ObjectType, StreamingToolCall, Usage,
 };
 
 /// Describes the type of content in an Anthropic message.
@@ -121,10 +121,19 @@ pub struct AnthropicContent {
     /// Will be `None` for non-text content types.
     #[serde(default)]
     pub text: Option<String>,
-    // Additional fields for other content types can be added here:
-    // pub id: Option<String>,  // for tool_use
-    // pub name: Option<String>,  // for tool_use
-    // pub input: Option<sonic_rs::Value>,  // for tool_use
+
+    /// Unique identifier for tool use blocks.
+    /// Format: "toolu_{alphanumeric}"
+    #[serde(default)]
+    pub id: Option<String>,
+
+    /// Name of the tool/function being called.
+    #[serde(default)]
+    pub name: Option<String>,
+
+    /// Input arguments for the tool as JSON.
+    #[serde(default)]
+    pub input: Option<serde_json::Value>,
 }
 
 /// Token usage information for an Anthropic API request.
@@ -142,8 +151,28 @@ pub struct AnthropicUsage {
     pub output_tokens: i32,
 }
 
+impl From<StopReason> for FinishReason {
+    fn from(reason: StopReason) -> Self {
+        match reason {
+            StopReason::EndTurn => FinishReason::Stop,
+            StopReason::MaxTokens => FinishReason::Length,
+            StopReason::StopSequence => FinishReason::Stop,
+            StopReason::ToolUse => FinishReason::ToolCalls,
+            StopReason::PauseTurn => FinishReason::Other("pause".to_string()),
+            StopReason::Refusal => FinishReason::ContentFilter,
+            StopReason::Other(s) => {
+                log::warn!("Unknown stop reason from Anthropic: {s}");
+                FinishReason::Other(s)
+            }
+        }
+    }
+}
+
 impl From<AnthropicResponse> for ChatCompletionResponse {
     fn from(response: AnthropicResponse) -> Self {
+        use crate::messages::{FunctionCall, ToolCall};
+
+        // Extract text content
         let message_content = response
             .content
             .iter()
@@ -153,6 +182,39 @@ impl From<AnthropicResponse> for ChatCompletionResponse {
             })
             .collect::<Vec<_>>()
             .join("");
+
+        // Extract tool calls
+        let tool_calls: Vec<ToolCall> = response
+            .content
+            .iter()
+            .filter_map(|c| match &c.r#type {
+                ContentType::ToolUse => Some(ToolCall {
+                    id: c
+                        .id
+                        .clone()
+                        .unwrap_or_else(|| format!("toolu_{}", uuid::Uuid::new_v4())),
+                    tool_type: crate::messages::ToolCallType::Function,
+                    function: FunctionCall {
+                        name: c.name.clone().unwrap_or_default(),
+                        arguments: c
+                            .input
+                            .as_ref()
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "{}".to_string()),
+                    },
+                }),
+                _ => None,
+            })
+            .collect();
+
+        // Determine if we have content or tool calls
+        let content = if message_content.is_empty() {
+            None
+        } else {
+            Some(message_content)
+        };
+
+        let tool_calls_opt = if tool_calls.is_empty() { None } else { Some(tool_calls) };
 
         Self {
             id: response.id,
@@ -166,23 +228,11 @@ impl From<AnthropicResponse> for ChatCompletionResponse {
                 index: 0,
                 message: ChatMessage {
                     role: response.role,
-                    content: message_content,
+                    content,
+                    tool_calls: tool_calls_opt,
+                    tool_call_id: None,
                 },
-                finish_reason: response
-                    .stop_reason
-                    .map(|sr| match sr {
-                        StopReason::EndTurn => FinishReason::Stop,
-                        StopReason::MaxTokens => FinishReason::Length,
-                        StopReason::StopSequence => FinishReason::Stop,
-                        StopReason::ToolUse => FinishReason::ToolCalls,
-                        StopReason::PauseTurn => FinishReason::Other("pause".to_string()),
-                        StopReason::Refusal => FinishReason::ContentFilter,
-                        StopReason::Other(s) => {
-                            log::warn!("Unknown stop reason from Anthropic: {s}");
-                            FinishReason::Other(s)
-                        }
-                    })
-                    .unwrap_or(FinishReason::Stop),
+                finish_reason: response.stop_reason.map(Into::into).unwrap_or(FinishReason::Stop),
             }],
             usage: Usage {
                 prompt_tokens: response.usage.input_tokens as u32,
@@ -231,7 +281,7 @@ pub(super) enum AnthropicStreamEvent<'a> {
     #[serde(rename = "content_block_start")]
     ContentBlockStart {
         index: u32,
-        content_block: AnthropicContentBlock<'a>,
+        content_block: AnthropicContentBlock,
     },
 
     /// Sent for each incremental update to a content block.
@@ -332,38 +382,33 @@ pub(super) struct AnthropicMessageStart<'a> {
 ///
 /// Sent in `content_block_start` events to indicate the type and initial
 /// state of a new content block being generated.
+///
+/// Uses internally tagged enum based on the "type" field.
+/// Uses owned strings since we convert to owned when creating tool calls anyway.
 #[allow(dead_code)] // Streaming types are defined but not yet fully implemented
 #[derive(Debug, Deserialize)]
-pub(super) struct AnthropicContentBlock<'a> {
-    /// Type of content block.
-    ///
-    /// Possible values:
-    /// - "text": Regular text response
-    /// - "tool_use": Tool/function call
-    #[serde(rename = "type")]
-    pub block_type: &'a str,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(super) enum AnthropicContentBlock {
+    /// Text content block - regular text response
+    #[serde(rename = "text")]
+    Text {
+        /// Initial text content.
+        /// Usually empty string "" at start, filled via deltas.
+        text: String,
+    },
 
-    /// Initial text content for text blocks.
-    ///
-    /// Usually empty string "" at start, filled via deltas.
-    /// Only present when block_type is "text".
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<&'a str>,
+    /// Tool use block - function/tool call
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        /// Unique identifier for this tool call.
+        /// Format: "toolu_{alphanumeric}"
+        /// Example: "toolu_01T1x1fJ34qAmk2tNTrN7Up6"
+        id: String,
 
-    /// Unique identifier for tool use blocks.
-    ///
-    /// Format: "toolu_{alphanumeric}"
-    /// Example: "toolu_01T1x1fJ34qAmk2tNTrN7Up6"
-    /// Only present when block_type is "tool_use".
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<&'a str>,
-
-    /// Name of the tool/function being called.
-    ///
-    /// Example: "get_weather", "search_web"
-    /// Only present when block_type is "tool_use".
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<&'a str>,
+        /// Name of the tool/function being called.
+        /// Example: "get_weather", "search_web"
+        name: String,
+    },
 }
 
 /// Delta content for a content block.
@@ -371,34 +416,30 @@ pub(super) struct AnthropicContentBlock<'a> {
 /// Sent in `content_block_delta` events with incremental updates
 /// to append to the current content block.
 ///
+/// Uses internally tagged enum based on the "type" field.
 /// Uses Cow (Clone on Write) to handle both borrowed strings (when no escaping needed)
 /// and owned strings (when escape sequences like \n need to be unescaped).
 #[allow(dead_code)] // Streaming types are defined but not yet fully implemented
 #[derive(Debug, Deserialize)]
-pub(super) struct AnthropicBlockDelta<'a> {
-    /// Type of delta being sent.
-    ///
-    /// Possible values:
-    /// - "text_delta": Text fragment to append
-    /// - "input_json_delta": Partial JSON for tool arguments
-    #[serde(rename = "type")]
-    pub delta_type: Cow<'a, str>,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(super) enum AnthropicBlockDelta<'a> {
+    /// Text delta - incremental text content
+    #[serde(rename = "text_delta")]
+    TextDelta {
+        /// Text fragment to append to the current text block.
+        /// Can be any length from a single character to multiple words.
+        /// Concatenate all text deltas to build the complete response.
+        text: Cow<'a, str>,
+    },
 
-    /// Text fragment to append to the current text block.
-    ///
-    /// Only present when delta_type is "text_delta".
-    /// Can be any length from a single character to multiple words.
-    /// Concatenate all text deltas to build the complete response.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<Cow<'a, str>>,
-
-    /// Partial JSON string for tool/function arguments.
-    ///
-    /// Only present when delta_type is "input_json_delta".
-    /// Contains fragments of JSON that should be concatenated
-    /// to build the complete tool arguments object.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub partial_json: Option<Cow<'a, str>>,
+    /// Input JSON delta - incremental tool arguments
+    #[serde(rename = "input_json_delta")]
+    InputJsonDelta {
+        /// Partial JSON string for tool/function arguments.
+        /// Contains fragments of JSON that should be concatenated
+        /// to build the complete tool arguments object.
+        partial_json: Cow<'a, str>,
+    },
 }
 
 /// Final message metadata delta.
@@ -469,6 +510,7 @@ pub(super) struct AnthropicStreamError<'a> {
 /// - Current text being accumulated from deltas
 /// - Model name for response
 /// - Usage statistics
+/// - Current tool calls being constructed
 pub(super) struct AnthropicStreamProcessor {
     provider_name: String,
     message_id: Option<String>,
@@ -476,6 +518,16 @@ pub(super) struct AnthropicStreamProcessor {
     current_text: String,
     usage: Option<AnthropicUsage>,
     created: u64,
+    /// Tool calls being constructed (index -> tool call data)
+    current_tool_calls: std::collections::HashMap<u32, ToolCallBuilder>,
+}
+
+/// Helper struct for building tool calls incrementally from streaming chunks.
+#[derive(Debug, Clone)]
+struct ToolCallBuilder {
+    id: Option<String>,
+    name: Option<String>,
+    arguments: String,
 }
 
 impl AnthropicStreamProcessor {
@@ -490,6 +542,7 @@ impl AnthropicStreamProcessor {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            current_tool_calls: std::collections::HashMap::new(),
         }
     }
 
@@ -524,32 +577,119 @@ impl AnthropicStreamProcessor {
                 })
             }
 
-            AnthropicStreamEvent::ContentBlockDelta { delta, .. } => {
-                // Emit text delta chunks
-                if let Some(text) = delta.text {
-                    self.current_text.push_str(&text);
+            AnthropicStreamEvent::ContentBlockStart { index, content_block } => {
+                // Handle the start of a tool use block
+                match content_block {
+                    AnthropicContentBlock::ToolUse { id, name } => {
+                        let tool_call = ToolCallBuilder {
+                            id: Some(id),
+                            name: Some(name),
+                            arguments: String::new(),
+                        };
 
-                    Some(ChatCompletionChunk {
-                        id: self.message_id.clone().unwrap_or_default(),
-                        object: ObjectType::ChatCompletionChunk,
-                        created: self.created,
-                        model: self.model.clone().unwrap_or_default(),
-                        choices: vec![ChatChoiceDelta {
+                        self.current_tool_calls.insert(index, tool_call.clone());
+
+                        // Emit tool call start chunk
+                        let tool_call_value = StreamingToolCall::Start {
                             index: 0,
-                            delta: ChatMessageDelta {
-                                role: None,
-                                content: Some(text.into_owned()),
-                                tool_calls: None,
-                                function_call: None,
+                            id: tool_call.id.unwrap_or_default(),
+                            r#type: crate::messages::ToolCallType::Function,
+                            function: FunctionStart {
+                                name: tool_call.name.unwrap_or_default(),
+                                arguments: String::new(),
                             },
-                            finish_reason: None,
-                            logprobs: None,
-                        }],
-                        system_fingerprint: None,
-                        usage: None,
-                    })
-                } else {
-                    None
+                        };
+
+                        Some(ChatCompletionChunk {
+                            id: self.message_id.clone().unwrap_or_default(),
+                            object: ObjectType::ChatCompletionChunk,
+                            created: self.created,
+                            model: self.model.clone().unwrap_or_default(),
+                            choices: vec![ChatChoiceDelta {
+                                index: 0,
+                                delta: ChatMessageDelta {
+                                    role: None,
+                                    content: None,
+                                    tool_calls: Some(vec![tool_call_value]),
+                                    function_call: None,
+                                },
+                                finish_reason: None,
+                                logprobs: None,
+                            }],
+                            system_fingerprint: None,
+                            usage: None,
+                        })
+                    }
+                    AnthropicContentBlock::Text { .. } => {
+                        // For text blocks, we don't emit anything at start
+                        None
+                    }
+                }
+            }
+
+            AnthropicStreamEvent::ContentBlockDelta { index, delta } => {
+                match delta {
+                    AnthropicBlockDelta::TextDelta { text } => {
+                        // Handle text content
+                        self.current_text.push_str(&text);
+
+                        Some(ChatCompletionChunk {
+                            id: self.message_id.clone().unwrap_or_default(),
+                            object: ObjectType::ChatCompletionChunk,
+                            created: self.created,
+                            model: self.model.clone().unwrap_or_default(),
+                            choices: vec![ChatChoiceDelta {
+                                index: 0,
+                                delta: ChatMessageDelta {
+                                    role: None,
+                                    content: Some(text.into_owned()),
+                                    tool_calls: None,
+                                    function_call: None,
+                                },
+                                finish_reason: None,
+                                logprobs: None,
+                            }],
+                            system_fingerprint: None,
+                            usage: None,
+                        })
+                    }
+
+                    AnthropicBlockDelta::InputJsonDelta { partial_json } => {
+                        // Handle tool call arguments accumulation
+                        if let Some(tool_call) = self.current_tool_calls.get_mut(&index) {
+                            tool_call.arguments.push_str(&partial_json);
+
+                            // Emit tool call arguments chunk
+                            let tool_call_value = StreamingToolCall::Delta {
+                                index: 0,
+                                function: FunctionDelta {
+                                    arguments: partial_json.into_owned(),
+                                },
+                            };
+
+                            Some(ChatCompletionChunk {
+                                id: self.message_id.clone().unwrap_or_default(),
+                                object: ObjectType::ChatCompletionChunk,
+                                created: self.created,
+                                model: self.model.clone().unwrap_or_default(),
+                                choices: vec![ChatChoiceDelta {
+                                    index: 0,
+                                    delta: ChatMessageDelta {
+                                        role: None,
+                                        content: None,
+                                        tool_calls: Some(vec![tool_call_value]),
+                                        function_call: None,
+                                    },
+                                    finish_reason: None,
+                                    logprobs: None,
+                                }],
+                                system_fingerprint: None,
+                                usage: None,
+                            })
+                        } else {
+                            None
+                        }
+                    }
                 }
             }
 
@@ -595,7 +735,7 @@ impl AnthropicStreamProcessor {
                 None
             }
 
-            _ => None, // Ignore other events (Ping, ContentBlockStart, ContentBlockStop, MessageStop)
+            _ => None, // Ignore other events (Ping, ContentBlockStop, MessageStop)
         }
     }
 }
