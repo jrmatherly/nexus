@@ -205,6 +205,84 @@ let downstream = if server_config.forwards_authentication() {
 };
 ```
 
+## Header Insertion for MCP
+
+The MCP crate supports header insertion for HTTP-based MCP servers. Headers with static values can be configured globally (for all MCP servers) or per-server.
+
+### Header Configuration
+
+MCP currently only supports the `insert` rule for adding static headers:
+
+```rust
+// From config/src/headers.rs
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "rule", rename_all = "snake_case")]
+pub enum McpHeaderRule {
+    /// Insert a new header with a static value.
+    Insert(HeaderInsert),
+}
+
+pub struct HeaderInsert {
+    pub name: HeaderName,
+    pub value: HeaderValue,  // Supports {{ env.VAR }} templating
+}
+```
+
+### Header Processing
+
+Headers are applied when creating HTTP clients for downstream servers:
+
+```rust
+// In downstream/client.rs
+pub async fn new_http<'a>(
+    name: &str,
+    config: &HttpConfig,
+    global_headers: impl Iterator<Item = &'a config::McpHeaderRule> + Clone,
+) -> anyhow::Result<Self> {
+    // Chain global headers with server-specific headers
+    let client = create_client(
+        config.tls.as_ref(),
+        config.auth.as_ref(),
+        global_headers.chain(config.get_effective_header_rules()),
+    )?;
+    // ...
+}
+
+fn create_client<'a>(
+    tls: Option<&TlsClientConfig>,
+    auth: Option<&ClientAuthConfig>,
+    header_rules: impl Iterator<Item = &'a config::McpHeaderRule>,
+) -> anyhow::Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder();
+    
+    // Process all header rules and build default headers
+    let mut headers = HeaderMap::new();
+    for rule in header_rules {
+        // MCP only supports Insert rule currently
+        match rule {
+            McpHeaderRule::Insert(insert) => {
+                headers.insert(
+                    HeaderName::from_str(&insert.name)?,
+                    HeaderValue::from_str(&insert.value)?
+                );
+            }
+        }
+    }
+    
+    // Apply headers as defaults to the HTTP client
+    builder = builder.default_headers(headers);
+    // ...
+}
+```
+
+### Key Points
+
+- **Static Values Only**: Headers are set at client initialization with static values
+- **Environment Variables**: Values support `{{ env.VAR_NAME }}` templating
+- **HTTP Only**: Headers only apply to HTTP-based MCP servers, not STDIO
+- **Insert Only**: Currently only supports inserting headers, not forwarding/removing
+- **Initialization Time**: Headers are configured when the client is created, not per-request
+
 ## Logging
 
 Use structured logging with appropriate levels:
@@ -260,3 +338,4 @@ Update triggers:
 - Modifying search algorithms or indexing
 - Updating authentication forwarding logic
 - Adding new built-in tools beyond search/execute
+- Modifying header rule processing or configuration

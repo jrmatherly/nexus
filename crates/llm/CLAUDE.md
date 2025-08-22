@@ -1065,3 +1065,134 @@ mod tests {
 18. **Use ModelManager**: Always use ModelManager for consistent model resolution across providers
 19. **Handle model renaming**: Support custom model names through configuration
 20. **Provider namespacing**: Always prefix model names with provider name in responses
+
+## Header Transformation for LLM Providers
+
+The LLM crate supports comprehensive header transformation through header rules. Headers can be configured at the provider level and model level, with model-level rules taking precedence.
+
+### Header Rule Types
+
+The LLM crate uses the full `HeaderRule` enum from the config crate:
+
+```rust
+// From config/src/headers.rs
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "rule", rename_all = "snake_case")]
+pub enum HeaderRule {
+    /// Forward a header from the incoming request.
+    Forward(HeaderForward),
+    /// Insert a new header with a static or templated value.
+    Insert(HeaderInsert),
+    /// Remove headers matching a name or pattern.
+    Remove(HeaderRemove),
+    /// Forward the header together with a renamed copy.
+    RenameDuplicate(HeaderRenameDuplicate),
+}
+```
+
+### Configuration Structure
+
+Headers are configured at multiple levels:
+
+```rust
+// Provider-level configuration (API providers only)
+pub struct ApiProviderConfig {
+    pub headers: Vec<HeaderRule>,
+    // ...
+}
+
+// Model-level configuration (API models only)
+pub struct ApiModelConfig {
+    pub headers: Vec<HeaderRule>,
+    // ...
+}
+
+// Note: Bedrock providers/models don't support headers due to SigV4 signing
+```
+
+### Header Rule Components
+
+1. **Forward Rule**:
+   ```rust
+   pub struct HeaderForward {
+       pub name: NameOrPattern,      // Single name or regex pattern
+       pub default: Option<HeaderValue>, // Default if header missing
+       pub rename: Option<HeaderName>,   // Optional rename
+   }
+   ```
+
+2. **Insert Rule**:
+   ```rust
+   pub struct HeaderInsert {
+       pub name: HeaderName,
+       pub value: HeaderValue,  // Supports {{ env.VAR }} templating
+   }
+   ```
+
+3. **Remove Rule**:
+   ```rust
+   pub struct HeaderRemove {
+       pub name: NameOrPattern,  // Single name or regex pattern
+   }
+   ```
+
+4. **RenameDuplicate Rule**:
+   ```rust
+   pub struct HeaderRenameDuplicate {
+       pub name: HeaderName,
+       pub default: Option<HeaderValue>,
+       pub rename: HeaderName,
+   }
+   ```
+
+### Name or Pattern Matching
+
+Headers can be matched by exact name or regex pattern:
+
+```rust
+pub enum NameOrPattern {
+    Pattern(NamePattern),  // Case-insensitive regex
+    Name(HeaderName),      // Exact header name
+}
+```
+
+### Implementation Notes
+
+- **Priority**: Model-level headers override provider-level headers
+- **Pattern Matching**: Regex patterns are case-insensitive
+- **Environment Variables**: Insert values support `{{ env.VAR }}` syntax
+- **Token Forwarding**: `X-Provider-API-Key` is handled separately
+- **AWS Bedrock**: Does not support custom headers due to SigV4 signing
+- **Processing Order**: Headers are processed in the order they're defined
+
+### Common Use Cases
+
+1. **Enable Beta Features**:
+   ```toml
+   [[llm.providers.openai.headers]]
+   rule = "insert"
+   name = "X-OpenAI-Beta"
+   value = "assistants=v2"
+   ```
+
+2. **Forward Tracing Headers**:
+   ```toml
+   [[llm.providers.openai.headers]]
+   rule = "forward"
+   pattern = "X-Trace-.*"
+   ```
+
+3. **Remove Internal Headers**:
+   ```toml
+   [[llm.providers.openai.headers]]
+   rule = "remove"
+   pattern = "X-Internal-.*"
+   ```
+
+4. **Rename Headers**:
+   ```toml
+   [[llm.providers.openai.headers]]
+   rule = "rename_duplicate"
+   name = "X-User-ID"
+   rename = "X-OpenAI-User"
+   ```
