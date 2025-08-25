@@ -8,6 +8,7 @@ use serde::{Deserialize, Deserializer, de::Error};
 use url::Url;
 
 use crate::RateLimitQuota;
+use crate::headers::McpHeaderRule;
 
 /// Configuration for MCP (Model Context Protocol) settings.
 #[derive(Debug, Clone, Deserialize)]
@@ -25,6 +26,10 @@ pub struct McpConfig {
     /// When true (default), the search tool uses the `structuredContent` field.
     /// When false, uses legacy `content` field with Content::json objects.
     pub enable_structured_content: bool,
+    /// Global header insertion rules for all MCP requests.
+    /// Only supports insert operations - applied at client initialization time.
+    #[serde(default)]
+    pub headers: Vec<McpHeaderRule>,
 }
 
 impl McpConfig {
@@ -86,6 +91,15 @@ impl McpServer {
             McpServer::Http(config) => config.rate_limits.as_ref(),
         }
     }
+
+    /// Get the effective header rules for this server.
+    /// STDIO servers don't support headers, so returns empty vec.
+    pub fn get_effective_header_rules(&self) -> Vec<&McpHeaderRule> {
+        match self {
+            McpServer::Stdio(_) => Vec::new(),
+            McpServer::Http(config) => config.get_effective_header_rules().collect(),
+        }
+    }
 }
 
 /// Configuration for downstream connection caching.
@@ -117,6 +131,7 @@ impl Default for McpConfig {
             downstream_cache: McpDownstreamCacheConfig::default(),
             servers: BTreeMap::new(),
             enable_structured_content: true, // Default to true for best performance
+            headers: Vec::new(),
         }
     }
 }
@@ -256,6 +271,10 @@ pub struct HttpConfig {
     /// Rate limit configuration for this MCP server.
     #[serde(default)]
     pub rate_limits: Option<McpServerRateLimit>,
+    /// Header insertion rules for this server.
+    /// Only supports insert operations - applied at client initialization time.
+    #[serde(default)]
+    pub headers: Vec<McpHeaderRule>,
 }
 
 impl HttpConfig {
@@ -289,6 +308,11 @@ impl HttpConfig {
             Some(ref auth) => matches!(auth, ClientAuthConfig::Forward { .. }),
             None => false,
         }
+    }
+
+    /// Get the effective header rules for this server
+    pub fn get_effective_header_rules(&self) -> impl ExactSizeIterator<Item = &McpHeaderRule> {
+        self.headers.iter()
     }
 }
 

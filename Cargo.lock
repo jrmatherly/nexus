@@ -361,28 +361,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-stream"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b5a71a6f37880a80d1d7f19efd781e4b5de42c88f0722cc13bcb6cc2cfe8476"
-dependencies = [
- "async-stream-impl",
- "futures-core",
- "pin-project-lite",
-]
-
-[[package]]
-name = "async-stream-impl"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7c24de15d275a1ecfd47a380fb4d5ec9bfe0933f309ed5e705b775596a3574d"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.106",
-]
-
-[[package]]
 name = "async-task"
 version = "4.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1403,6 +1381,7 @@ dependencies = [
  "indoc",
  "insta",
  "log",
+ "regex",
  "secrecy",
  "serde",
  "serde-dynamic-string",
@@ -2847,6 +2826,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "header-rules"
+version = "0.1.0"
+dependencies = [
+ "config",
+ "http 1.3.1",
+]
+
+[[package]]
 name = "heck"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3408,7 +3395,6 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.106",
 ]
 
 [[package]]
@@ -3428,7 +3414,6 @@ dependencies = [
  "indoc",
  "insta",
  "integration-test-macros",
- "itertools 0.14.0",
  "log",
  "logforth",
  "reqwest",
@@ -3437,7 +3422,6 @@ dependencies = [
  "serde",
  "serde_json",
  "server",
- "sonic-rs",
  "tempfile",
  "tokio",
  "tokio-util",
@@ -3699,7 +3683,6 @@ name = "llm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-stream",
  "async-trait",
  "aws-config",
  "aws-credential-types",
@@ -3710,6 +3693,7 @@ dependencies = [
  "config",
  "eventsource-stream",
  "futures",
+ "header-rules",
  "insta",
  "itertools 0.14.0",
  "log",

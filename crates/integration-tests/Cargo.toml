@@ -21,7 +21,6 @@ futures-util.workspace = true
 indoc.workspace = true
 insta.workspace = true
 integration-test-macros = { path = "../integration-test-macros" }
-itertools.workspace = true
 log.workspace = true
 logforth = { workspace = true, features = ["colored"] }
 reqwest = { workspace = true, features = ["json"] }
@@ -38,7 +37,6 @@ rustls.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 server.workspace = true
-sonic-rs = { workspace = true, features = ["sort_keys"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-util.workspace = true

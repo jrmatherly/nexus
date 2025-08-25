@@ -202,6 +202,56 @@ If you enable OAuth2 authentication to your server, and your downstream servers 
 type = "forward"
 ```
 
+#### Header Insertion for MCP Servers
+
+Nexus supports inserting static headers when making requests to MCP servers. Headers can be configured globally (for all MCP servers) or per-server.
+
+**Note**: MCP currently only supports header insertion with static values. Headers from incoming requests are not forwarded.
+
+##### Global MCP Headers
+
+Configure headers that apply to all MCP servers:
+
+```toml
+# Global headers for all MCP servers
+[[mcp.headers]]
+rule = "insert"
+name = "X-Application"
+value = "nexus-router"
+
+[[mcp.headers]]
+rule = "insert"
+name = "X-API-Version"
+value = "v1"
+```
+
+##### Server-Specific Headers
+
+Configure headers for individual HTTP-based MCP servers:
+
+```toml
+[mcp.servers.my_server]
+url = "https://api.example.com/mcp"
+
+# Insert headers for this specific server
+[[mcp.servers.my_server.headers]]
+rule = "insert"
+name = "X-API-Key"
+value = "{{ env.MY_API_KEY }}"  # Environment variable substitution
+
+[[mcp.servers.my_server.headers]]
+rule = "insert"
+name = "X-Service-Name"
+value = "my-service"
+```
+
+##### MCP Header Features
+
+- **Static Values Only**: Headers are set at client initialization time with static values
+- **Environment Variables**: Use `{{ env.VAR_NAME }}` syntax for environment variable substitution
+- **HTTP Servers Only**: Headers only apply to HTTP-based MCP servers (not STDIO servers)
+- **Insert Rule**: Currently only the `insert` rule is supported for MCP
+
 #### OAuth2 Authentication
 
 Configure OAuth2 authentication to protect your Nexus endpoints:
@@ -752,6 +802,109 @@ curl -X POST http://localhost:8000/llm/v1/chat/completions \
 
 ##### Provider Limitations
 - **AWS Bedrock**: Token forwarding is **not supported** for Bedrock providers. Bedrock uses AWS IAM credentials and request signing, which cannot be provided via simple API key headers. You must configure AWS credentials at the provider level (via environment variables, AWS profile, or explicit credentials in configuration).
+
+#### Header Transformation for LLM Providers
+
+Nexus supports comprehensive header transformation for LLM providers, allowing you to forward, insert, remove, or rename headers when making requests to LLM APIs.
+
+##### Provider-Level Headers
+
+Configure header rules at the provider level:
+
+```toml
+[llm.providers.openai]
+type = "openai"
+api_key = "{{ env.OPENAI_API_KEY }}"
+
+# Forward headers from incoming requests
+[[llm.providers.openai.headers]]
+rule = "forward"
+name = "X-Request-ID"
+
+# Forward with a default value if not present
+[[llm.providers.openai.headers]]
+rule = "forward"
+name = "X-Trace-ID"
+default = "generated-trace-id"
+
+# Forward and rename
+[[llm.providers.openai.headers]]
+rule = "forward"
+name = "X-Custom-Header"
+rename = "X-OpenAI-Custom"
+
+# Insert static headers
+[[llm.providers.openai.headers]]
+rule = "insert"
+name = "X-OpenAI-Beta"
+value = "assistants=v2"
+
+# Remove headers
+[[llm.providers.openai.headers]]
+rule = "remove"
+name = "X-Internal-Secret"
+
+# Pattern-based forwarding (regex)
+[[llm.providers.openai.headers]]
+rule = "forward"
+pattern = "X-Debug-.*"
+
+# Pattern-based removal
+[[llm.providers.openai.headers]]
+rule = "remove"
+pattern = "X-Internal-.*"
+
+# Rename and duplicate (keeps original and adds renamed copy)
+[[llm.providers.openai.headers]]
+rule = "rename_duplicate"
+name = "X-User-ID"
+rename = "X-OpenAI-User"
+```
+
+##### Model-Level Headers
+
+Configure headers for specific models (overrides provider-level rules):
+
+```toml
+[llm.providers.openai.models.gpt-4]
+# Model-specific headers override provider headers
+[[llm.providers.openai.models.gpt-4.headers]]
+rule = "insert"
+name = "X-Model-Config"
+value = "premium"
+
+[[llm.providers.openai.models.gpt-4.headers]]
+rule = "forward"
+pattern = "X-Premium-.*"
+```
+
+##### Header Rule Types
+
+1. **forward**: Pass headers from incoming requests to the LLM provider
+   - `name`: Single header name to forward
+   - `pattern`: Regex pattern to match multiple headers
+   - `default`: Optional default value if header is missing
+   - `rename`: Optional new name for the forwarded header
+
+2. **insert**: Add static headers to requests
+   - `name`: Header name
+   - `value`: Static value (supports `{{ env.VAR }}` substitution)
+
+3. **remove**: Remove headers before sending to provider
+   - `name`: Single header name to remove
+   - `pattern`: Regex pattern to match headers to remove
+
+4. **rename_duplicate**: Forward header with both original and new name
+   - `name`: Original header name
+   - `rename`: New header name for the duplicate
+   - `default`: Optional default if header is missing
+
+##### Important Notes
+
+- **AWS Bedrock**: Does not support custom headers due to SigV4 signing requirements
+- **Priority**: Model-level rules override provider-level rules
+- **Token Forwarding**: The `X-Provider-API-Key` header is handled separately for token forwarding
+- **Pattern Matching**: Patterns are case-insensitive regex expressions
 
 #### Using the LLM API
 
