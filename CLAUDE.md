@@ -263,11 +263,16 @@ async fn user_can_search_tools() { ... }
 async fn test_user_can_search_tools() { ... }
 ```
 
-### Snapshot Testing
-Prefer insta snapshots over manual assertions:
+### Snapshot Testing (INLINE ONLY - CRITICAL)
+
+**STRICT RULES**:
+1. Use `assert_eq!` ONLY for primitives (bool, int, status codes)
+2. Use insta snapshots for ALL complex types (structs, vecs, JSON)
+3. Snapshots MUST be inline (`@r###"..."###`) - NO external files
+4. NEVER use `assert_eq!` to compare complex objects
 
 ```rust
-// Good: Inline snapshot
+// GOOD: Inline snapshot for complex data
 insta::assert_json_snapshot!(response, @r###"
 {
   "tools": ["search", "execute"],
@@ -275,9 +280,13 @@ insta::assert_json_snapshot!(response, @r###"
 }
 "###);
 
-// Avoid: Manual assertions for complex data
-assert_eq!(response.tools.len(), 2);
-assert_eq!(response.tools[0], "search");
+// GOOD: Simple assertions for primitives only
+assert_eq!(response.status(), 200);
+assert!(config.enabled);
+
+// BAD: NEVER do this for complex types
+assert_eq!(response.tools.len(), 2);  // NO! Use snapshot
+assert_eq!(response.tools[0], "search");  // NO! Use snapshot
 ```
 
 Prefer approve over review with cargo-insta:
