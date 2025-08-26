@@ -10,6 +10,7 @@ mod llm;
 mod loader;
 mod mcp;
 mod rate_limit;
+mod telemetry;
 
 use std::{
     borrow::Cow,
@@ -37,6 +38,9 @@ pub use mcp::{
 };
 pub use rate_limit::*;
 use serde::Deserialize;
+pub use telemetry::exporters::{ExportersConfig, OtlpExporterConfig};
+pub use telemetry::tracing::TracingConfig;
+pub use telemetry::{LogsConfig, MetricsConfig, TelemetryConfig};
 use url::Url;
 
 /// Main configuration structure for the Nexus application.
@@ -52,6 +56,9 @@ pub struct Config {
     /// LLM configuration settings.
     #[serde(default)]
     pub llm: LlmConfig,
+    /// Telemetry configuration settings.
+    #[serde(default)]
+    pub telemetry: Option<TelemetryConfig>,
 }
 
 impl Config {
@@ -305,6 +312,7 @@ mod tests {
                 path: "/llm",
                 providers: {},
             },
+            telemetry: None,
         }
         "#);
     }
@@ -353,6 +361,7 @@ mod tests {
                 path: "/llm",
                 providers: {},
             },
+            telemetry: None,
         }
         "#);
     }
@@ -3412,7 +3421,425 @@ mod tests {
                     ),
                 },
             },
+            telemetry: None,
         }
+        "#);
+    }
+
+    #[test]
+    fn telemetry_default_config() {
+        let config: Config = toml::from_str("").unwrap();
+
+        insta::assert_debug_snapshot!(config.telemetry, @"None");
+    }
+
+    #[test]
+    fn telemetry_basic_otlp_config() {
+        let config = indoc! {r#"
+            [telemetry]
+            service_name = "nexus"
+            
+            [telemetry.exporters.otlp]
+            enabled = true
+            endpoint = "http://localhost:4317"
+            protocol = "grpc"
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+
+        let telemetry = config.telemetry.as_ref().expect("telemetry config");
+        insta::assert_debug_snapshot!(telemetry.global_exporters().otlp(), @r###"
+        Some(
+            OtlpExporterConfig {
+                enabled: true,
+                endpoint: Url {
+                    scheme: "http",
+                    cannot_be_a_base: false,
+                    username: "",
+                    password: None,
+                    host: Some(
+                        Domain(
+                            "localhost",
+                        ),
+                    ),
+                    port: Some(
+                        4317,
+                    ),
+                    path: "/",
+                    query: None,
+                    fragment: None,
+                },
+                protocol: Grpc,
+                timeout: 60s,
+                batch_export: BatchExportConfig {
+                    scheduled_delay: 5s,
+                    max_queue_size: 2048,
+                    max_export_batch_size: 512,
+                    max_concurrent_exports: 1,
+                },
+            },
+        )
+        "###);
+    }
+
+    #[test]
+    fn telemetry_otlp_with_batch_config() {
+        let config = indoc! {r#"
+            [telemetry.exporters.otlp]
+            enabled = true
+            endpoint = "http://collector:4317"
+            protocol = "http"
+            timeout = "30s"
+            
+            [telemetry.exporters.otlp.batch_export]
+            scheduled_delay = "10s"
+            max_queue_size = 4096
+            max_export_batch_size = 1024
+            max_concurrent_exports = 2
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+
+        let telemetry = config.telemetry.as_ref().expect("telemetry config");
+        insta::assert_debug_snapshot!(telemetry.global_exporters().otlp(), @r###"
+        Some(
+            OtlpExporterConfig {
+                enabled: true,
+                endpoint: Url {
+                    scheme: "http",
+                    cannot_be_a_base: false,
+                    username: "",
+                    password: None,
+                    host: Some(
+                        Domain(
+                            "collector",
+                        ),
+                    ),
+                    port: Some(
+                        4317,
+                    ),
+                    path: "/",
+                    query: None,
+                    fragment: None,
+                },
+                protocol: Http,
+                timeout: 30s,
+                batch_export: BatchExportConfig {
+                    scheduled_delay: 10s,
+                    max_queue_size: 4096,
+                    max_export_batch_size: 1024,
+                    max_concurrent_exports: 2,
+                },
+            },
+        )
+        "###);
+    }
+
+    #[test]
+    fn telemetry_tracing_config() {
+        let config = indoc! {r#"
+            [telemetry.tracing]
+            sampling = 0.5
+            parent_based_sampler = true
+            
+            [telemetry.tracing.propagation]
+            trace_context = true
+            baggage = true
+            aws_xray = true
+            jaeger = false
+            
+            [telemetry.tracing.collect]
+            max_events_per_span = 256
+            max_attributes_per_span = 512
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+
+        let telemetry = config.telemetry.as_ref().expect("telemetry config");
+        insta::assert_debug_snapshot!(telemetry.tracing(), @r"
+        TracingConfig {
+            sampling: 0.5,
+            parent_based_sampler: true,
+            collect: CollectConfig {
+                max_events_per_span: 256,
+                max_attributes_per_span: 512,
+                max_links_per_span: 128,
+                max_attributes_per_event: 128,
+                max_attributes_per_link: 128,
+            },
+            propagation: PropagationConfig {
+                trace_context: true,
+                baggage: true,
+                aws_xray: true,
+                jaeger: false,
+            },
+            exporters: None,
+        }
+        ");
+    }
+
+    #[test]
+    fn telemetry_resource_attributes() {
+        let config = indoc! {r#"
+            [telemetry]
+            service_name = "nexus-prod"
+            
+            [telemetry.resource_attributes]
+            environment = "production"
+            region = "us-west-2"
+            version = "1.0.0"
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+
+        insta::assert_debug_snapshot!(config.telemetry, @r#"
+        Some(
+            TelemetryConfig {
+                service_name: Some(
+                    "nexus-prod",
+                ),
+                resource_attributes: {
+                    "environment": "production",
+                    "region": "us-west-2",
+                    "version": "1.0.0",
+                },
+                exporters: ExportersConfig {
+                    otlp: None,
+                },
+                tracing: TracingConfig {
+                    sampling: 0.15,
+                    parent_based_sampler: false,
+                    collect: CollectConfig {
+                        max_events_per_span: 128,
+                        max_attributes_per_span: 128,
+                        max_links_per_span: 128,
+                        max_attributes_per_event: 128,
+                        max_attributes_per_link: 128,
+                    },
+                    propagation: PropagationConfig {
+                        trace_context: false,
+                        baggage: false,
+                        aws_xray: false,
+                        jaeger: false,
+                    },
+                    exporters: None,
+                },
+                metrics: MetricsConfig {
+                    exporters: None,
+                },
+                logs: LogsConfig {
+                    exporters: None,
+                },
+            },
+        )
+        "#);
+    }
+
+    #[test]
+    fn telemetry_signal_specific_exporters() {
+        let config = indoc! {r#"
+            [telemetry.exporters.otlp]
+            enabled = true
+            endpoint = "http://global:4317"
+            
+            [telemetry.metrics.exporters.otlp]
+            enabled = true
+            endpoint = "http://metrics:4317"
+            
+            [telemetry.logs.exporters.otlp]
+            enabled = true
+            endpoint = "http://logs:4317"
+            protocol = "http"
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+
+        let telemetry = config.telemetry.as_ref().expect("telemetry config");
+        insta::assert_debug_snapshot!((
+            telemetry.global_exporters().otlp().map(|o| o.endpoint.clone()), 
+            telemetry.metrics_exporters().otlp().map(|o| o.endpoint.clone()), 
+            telemetry.logs_exporters().otlp()
+        ), @r#"
+        (
+            Some(
+                Url {
+                    scheme: "http",
+                    cannot_be_a_base: false,
+                    username: "",
+                    password: None,
+                    host: Some(
+                        Domain(
+                            "global",
+                        ),
+                    ),
+                    port: Some(
+                        4317,
+                    ),
+                    path: "/",
+                    query: None,
+                    fragment: None,
+                },
+            ),
+            Some(
+                Url {
+                    scheme: "http",
+                    cannot_be_a_base: false,
+                    username: "",
+                    password: None,
+                    host: Some(
+                        Domain(
+                            "metrics",
+                        ),
+                    ),
+                    port: Some(
+                        4317,
+                    ),
+                    path: "/",
+                    query: None,
+                    fragment: None,
+                },
+            ),
+            Some(
+                OtlpExporterConfig {
+                    enabled: true,
+                    endpoint: Url {
+                        scheme: "http",
+                        cannot_be_a_base: false,
+                        username: "",
+                        password: None,
+                        host: Some(
+                            Domain(
+                                "logs",
+                            ),
+                        ),
+                        port: Some(
+                            4317,
+                        ),
+                        path: "/",
+                        query: None,
+                        fragment: None,
+                    },
+                    protocol: Http,
+                    timeout: 60s,
+                    batch_export: BatchExportConfig {
+                        scheduled_delay: 5s,
+                        max_queue_size: 2048,
+                        max_export_batch_size: 512,
+                        max_concurrent_exports: 1,
+                    },
+                },
+            ),
+        )
+        "#);
+    }
+
+    #[test]
+    fn telemetry_full_config() {
+        let config = indoc! {r#"
+            [telemetry]
+            service_name = "nexus"
+            
+            [telemetry.resource_attributes]
+            environment = "production"
+            
+            [telemetry.exporters.otlp]
+            enabled = true
+            endpoint = "http://localhost:4317"
+            protocol = "grpc"
+            timeout = "60s"
+            
+            [telemetry.exporters.otlp.batch_export]
+            scheduled_delay = "5s"
+            max_queue_size = 2048
+            max_export_batch_size = 512
+            max_concurrent_exports = 1
+            
+            [telemetry.tracing]
+            sampling = 0.15
+            parent_based_sampler = false
+            
+            [telemetry.tracing.collect]
+            max_events_per_span = 128
+            max_attributes_per_span = 128
+            max_links_per_span = 128
+            max_attributes_per_event = 128
+            max_attributes_per_link = 128
+            
+            [telemetry.tracing.propagation]
+            trace_context = true
+            baggage = true
+            aws_xray = false
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+
+        insta::assert_debug_snapshot!(config.telemetry, @r#"
+        Some(
+            TelemetryConfig {
+                service_name: Some(
+                    "nexus",
+                ),
+                resource_attributes: {
+                    "environment": "production",
+                },
+                exporters: ExportersConfig {
+                    otlp: Some(
+                        OtlpExporterConfig {
+                            enabled: true,
+                            endpoint: Url {
+                                scheme: "http",
+                                cannot_be_a_base: false,
+                                username: "",
+                                password: None,
+                                host: Some(
+                                    Domain(
+                                        "localhost",
+                                    ),
+                                ),
+                                port: Some(
+                                    4317,
+                                ),
+                                path: "/",
+                                query: None,
+                                fragment: None,
+                            },
+                            protocol: Grpc,
+                            timeout: 60s,
+                            batch_export: BatchExportConfig {
+                                scheduled_delay: 5s,
+                                max_queue_size: 2048,
+                                max_export_batch_size: 512,
+                                max_concurrent_exports: 1,
+                            },
+                        },
+                    ),
+                },
+                tracing: TracingConfig {
+                    sampling: 0.15,
+                    parent_based_sampler: false,
+                    collect: CollectConfig {
+                        max_events_per_span: 128,
+                        max_attributes_per_span: 128,
+                        max_links_per_span: 128,
+                        max_attributes_per_event: 128,
+                        max_attributes_per_link: 128,
+                    },
+                    propagation: PropagationConfig {
+                        trace_context: true,
+                        baggage: true,
+                        aws_xray: false,
+                        jaeger: false,
+                    },
+                    exporters: None,
+                },
+                metrics: MetricsConfig {
+                    exporters: None,
+                },
+                logs: LogsConfig {
+                    exporters: None,
+                },
+            },
+        )
         "#);
     }
 }
