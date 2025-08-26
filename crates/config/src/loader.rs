@@ -346,3 +346,413 @@ fn provider_has_any_model_with_group_limit(provider: &LlmProviderConfig, group: 
         .values()
         .any(|model| model_has_group_limit(model, group))
 }
+
+#[cfg(test)]
+mod tests {
+    use indoc::indoc;
+    use insta::assert_debug_snapshot;
+    use insta::assert_snapshot;
+
+    use crate::Config;
+
+    #[test]
+    fn validation_logic_identifies_no_downstreams() {
+        // Test that validation logic correctly identifies when no downstreams are configured
+        let config = Config::default();
+        let result = super::validate_has_downstreams(&config);
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+
+        assert_snapshot!(error_msg, @r#"
+        No downstream servers configured. Nexus requires at least one MCP server or LLM provider to function.
+
+        Example configuration:
+
+        For MCP servers:
+
+          [mcp.servers.example]
+          cmd = ["path/to/mcp-server"]
+
+        For LLM providers:
+
+          [llm.providers.openai]
+          type = "openai"
+          api_key = "{{ env.OPENAI_API_KEY }}"
+
+        See https://nexusrouter.com/docs for more configuration examples.
+        "#);
+    }
+
+    #[test]
+    fn validation_fails_when_both_disabled() {
+        let config_str = indoc! {r#"
+            [mcp]
+            enabled = false
+
+            [llm]
+            enabled = false
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = super::validate_has_downstreams(&config);
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+
+        assert_snapshot!(error_msg, @r#"
+        No downstream servers configured. Nexus requires at least one MCP server or LLM provider to function.
+
+        Example configuration:
+
+        For MCP servers:
+
+          [mcp.servers.example]
+          cmd = ["path/to/mcp-server"]
+
+        For LLM providers:
+
+          [llm.providers.openai]
+          type = "openai"
+          api_key = "{{ env.OPENAI_API_KEY }}"
+
+        See https://nexusrouter.com/docs for more configuration examples.
+        "#);
+    }
+
+    #[test]
+    fn validation_fails_when_mcp_enabled_but_no_servers() {
+        let config_str = indoc! {r#"
+            [mcp]
+            enabled = true
+
+            [llm]
+            enabled = false
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = super::validate_has_downstreams(&config);
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+
+        assert_snapshot!(error_msg, @r#"
+        No downstream servers configured. Nexus requires at least one MCP server or LLM provider to function.
+
+        Example configuration:
+
+        For MCP servers:
+
+          [mcp.servers.example]
+          cmd = ["path/to/mcp-server"]
+
+        For LLM providers:
+
+          [llm.providers.openai]
+          type = "openai"
+          api_key = "{{ env.OPENAI_API_KEY }}"
+
+        See https://nexusrouter.com/docs for more configuration examples.
+        "#);
+    }
+
+    #[test]
+    fn validation_fails_when_llm_enabled_but_no_providers() {
+        let config_str = indoc! {r#"
+            [mcp]
+            enabled = false
+
+            [llm]
+            enabled = true
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = super::validate_has_downstreams(&config);
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+
+        assert_snapshot!(error_msg, @r#"
+        No downstream servers configured. Nexus requires at least one MCP server or LLM provider to function.
+
+        Example configuration:
+
+        For MCP servers:
+
+          [mcp.servers.example]
+          cmd = ["path/to/mcp-server"]
+
+        For LLM providers:
+
+          [llm.providers.openai]
+          type = "openai"
+          api_key = "{{ env.OPENAI_API_KEY }}"
+
+        See https://nexusrouter.com/docs for more configuration examples.
+        "#);
+    }
+
+    #[test]
+    fn validation_passes_with_mcp_server() {
+        let config_str = indoc! {r#"
+            [mcp.servers.test]
+            cmd = ["echo", "test"]
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = super::validate_has_downstreams(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validation_passes_with_llm_provider() {
+        let config_str = indoc! {r#"
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+
+            [llm.providers.openai.models.gpt-4]
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = super::validate_has_downstreams(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validation_passes_with_both_mcp_and_llm() {
+        let config_str = indoc! {r#"
+            [mcp.servers.test]
+            cmd = ["echo", "test"]
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+
+            [llm.providers.openai.models.gpt-4]
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = super::validate_has_downstreams(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validation_passes_when_mcp_disabled_but_llm_has_providers() {
+        let config_str = indoc! {r#"
+            [mcp]
+            enabled = false
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+
+            [llm.providers.openai.models.gpt-4]
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = super::validate_has_downstreams(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validation_passes_when_llm_disabled_but_mcp_has_servers() {
+        let config_str = indoc! {r#"
+            [llm]
+            enabled = false
+
+            [mcp.servers.test]
+            cmd = ["echo", "test"]
+        "#};
+
+        let config: Config = toml::from_str(config_str).unwrap();
+        let result = super::validate_has_downstreams(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn rate_limit_validation_with_groups() {
+        let config = indoc! {r#"
+            [server.client_identification]
+            enabled = true
+            client_id.jwt_claim = "sub"
+            group_id.jwt_claim = "plan"
+
+            [server.client_identification.validation]
+            group_values = ["free", "pro"]
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+
+            [llm.providers.openai.rate_limits.per_user]
+            input_token_limit = 50000
+            interval = "60s"
+
+            [llm.providers.openai.rate_limits.per_user.groups]
+            free = { input_token_limit = 10000, interval = "60s" }
+            pro = { input_token_limit = 100000, interval = "60s" }
+
+            [llm.providers.openai.models.gpt-4]
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+        let warnings = super::validate_rate_limits(&config).unwrap();
+
+        // Should have warnings about model fallbacks
+        assert_debug_snapshot!(warnings, @r#"
+        [
+            "Group 'free' for model 'openai/gpt-4' will use provider group rate limit",
+            "Group 'pro' for model 'openai/gpt-4' will use provider group rate limit",
+        ]
+        "#);
+    }
+
+    #[test]
+    fn rate_limits_without_client_identification_fails() {
+        let config = indoc! {r#"
+            [server.client_identification]
+            enabled = false
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+
+            [llm.providers.openai.rate_limits.per_user]
+            input_token_limit = 10000
+            interval = "60s"
+
+            [llm.providers.openai.models.gpt-4]
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+        let result = super::validate_rate_limits(&config);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+
+        assert_snapshot!(error, @"LLM rate limits are configured but client identification is not enabled. Enable client identification in [server.client_identification]");
+    }
+
+    #[test]
+    fn model_rate_limits_without_client_identification_fails() {
+        let config = indoc! {r#"
+            [server.client_identification]
+            enabled = false
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+
+            [llm.providers.openai.models.gpt-4.rate_limits.per_user]
+            input_token_limit = 5000
+            interval = "60s"
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+        let result = super::validate_rate_limits(&config);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+        assert_snapshot!(error, @"LLM rate limits are configured but client identification is not enabled. Enable client identification in [server.client_identification]");
+    }
+
+    #[test]
+    fn group_id_without_allowed_groups_fails() {
+        let config = indoc! {r#"
+            [server.client_identification]
+            enabled = true
+            client_id.jwt_claim = "sub"
+            group_id.jwt_claim = "plan"
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+
+            [llm.providers.openai.rate_limits.per_user]
+            input_token_limit = 5000
+            interval = "60s"
+
+            [llm.providers.openai.models.gpt-4]
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+        let result = super::validate_rate_limits(&config);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+
+        assert_snapshot!(error, @"group_id is configured for client identification but validation.group_values is empty. Define group_values in [server.client_identification.validation]");
+    }
+
+    #[test]
+    fn group_rate_limits_without_group_id_fails() {
+        let config = indoc! {r#"
+            [server.client_identification]
+            enabled = true
+            client_id.jwt_claim = "sub"
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+
+            [llm.providers.openai.rate_limits.per_user]
+            input_token_limit = 5000
+            interval = "60s"
+
+            [llm.providers.openai.rate_limits.per_user.groups]
+            free = { input_token_limit = 10000, interval = "60s" }
+
+            [llm.providers.openai.models.gpt-4]
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+        let result = super::validate_rate_limits(&config);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+
+        assert_snapshot!(error, @r#"
+        Group-based rate limits are configured but group_id is not set in client identification.
+        To fix this, add a group_id configuration to your [server.client_identification] section, for example:
+
+        [server.client_identification]
+        enabled = true
+        client_id.http_header = "X-Client-ID"      # or client_id.jwt_claim = "sub"
+        group_id.http_header = "X-Group-ID"        # or group_id.jwt_claim = "groups"
+
+        [server.client_identification.validation]
+        group_values = ["basic", "premium", "enterprise"]
+        "#);
+    }
+
+    #[test]
+    fn rate_limit_validation_invalid_group() {
+        let config = indoc! {r#"
+            [server.client_identification]
+            enabled = true
+            client_id.jwt_claim = "sub"
+            group_id.jwt_claim = "plan"
+
+            [server.client_identification.validation]
+            group_values = ["free", "pro"]
+
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "test-key"
+
+            [llm.providers.openai.rate_limits.per_user]
+            input_token_limit = 50000
+            interval = "60s"
+
+            [llm.providers.openai.rate_limits.per_user.groups]
+            enterprise = { input_token_limit = 1000000, interval = "60s" }
+
+            [llm.providers.openai.models.gpt-4]
+        "#};
+
+        let config: Config = toml::from_str(config).unwrap();
+        let result = super::validate_rate_limits(&config);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+
+        assert_snapshot!(error, @"Group 'enterprise' in provider 'openai' rate limits not found in group_values");
+    }
+}

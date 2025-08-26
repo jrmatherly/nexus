@@ -12,6 +12,32 @@ The config crate provides:
 - Rate limiting configuration for global, per-IP, and per-MCP-server limits
 - Redis and in-memory storage backends for rate limiting
 
+## Module Structure
+
+The configuration crate is organized into focused modules:
+
+### Core Modules
+- `lib.rs` - Main `Config` struct and basic configuration tests
+- `loader.rs` - Configuration loading, validation logic, and validation tests
+- `server.rs` - HTTP server configuration (`ServerConfig`)
+- `client_identity.rs` - Runtime client identity type (`ClientIdentity`)
+
+### Feature-Specific Configuration
+- `oauth.rs` - OAuth2 authentication configuration (`OauthConfig`, `ProtectedResourceConfig`)
+- `health.rs` - Health endpoint configuration (`HealthConfig`)
+- `csrf.rs` - CSRF protection configuration (`CsrfConfig`)
+- `tls.rs` - TLS/SSL configuration (`TlsServerConfig`)
+- `cors.rs` - CORS configuration with comprehensive tests
+- `client_identification.rs` - Client identification for rate limiting
+
+### Service Configuration
+- `mcp.rs` - Model Context Protocol configuration
+- `llm.rs` - LLM provider configuration
+- `telemetry.rs` - Telemetry and observability configuration
+- `rate_limit.rs` - Rate limiting configuration
+- `headers.rs` - Header manipulation rules
+- `http_types.rs` - Common HTTP types (headers, values)
+
 ## Key Principles
 
 ### Configuration Structure
@@ -128,6 +154,19 @@ pub struct Config {
 }
 ```
 
+## Test Organization
+
+Tests are co-located with their relevant modules for better maintainability:
+
+- **`lib.rs`**: Basic `Config` struct tests (defaults, parsing)
+- **`loader.rs`**: Validation tests (downstream validation, rate limit validation)
+- **Module-specific tests**: Each configuration module contains its own tests
+  - `cors.rs`: All CORS configuration tests
+  - `oauth.rs`: OAuth configuration tests
+  - `client_identification.rs`: Client identification tests
+  - `llm.rs`: LLM provider configuration tests
+  - `rate_limit.rs`: Rate limit storage configuration tests
+
 ## Testing
 
 Always include tests for:
@@ -136,20 +175,70 @@ Always include tests for:
 - Validation logic
 - Environment variable overrides
 
-Use insta inline snapshots for testing configuration structures:
+### Test Structure Pattern
+
+**IMPORTANT**: Configuration tests must follow this consistent pattern:
+
+1. **Start with `indoc!` for TOML input** - Makes multi-line TOML readable and maintainable
+2. **Parse the TOML into Config struct** - Use `toml::from_str()`
+3. **End with inline `insta` debug snapshot** - Captures the exact parsed structure
+
+This pattern ensures:
+- **Readability**: TOML input is clearly visible and properly formatted
+- **Maintainability**: Changes to config structures are immediately visible in snapshots
+- **Consistency**: All tests follow the same structure, making them easy to understand
+- **Completeness**: Snapshots show ALL fields, including defaults, preventing hidden bugs
 
 ```rust
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indoc::indoc;
     use insta::assert_debug_snapshot;
+
+    #[test]
+    fn config_parsing_example() {
+        // 1. Always start with indoc! for TOML input
+        let config_str = indoc! {r#"
+            [server]
+            host = "127.0.0.1"
+            port = 8080
+            
+            [mcp]
+            max_connections = 20
+        "#};
+
+        // 2. Parse the TOML
+        let config: Config = toml::from_str(config_str).unwrap();
+
+        // 3. Always end with inline insta debug snapshot
+        assert_debug_snapshot!(config, @r###"
+        Config {
+            server: ServerConfig {
+                host: "127.0.0.1",
+                port: 8080,
+                timeout_secs: 30,
+            },
+            mcp: McpConfig {
+                max_connections: 20,
+                timeout_secs: 60,
+            },
+            auth: AuthConfig {
+                enabled: false,
+            },
+            search: SearchConfig {
+                index_path: "./data/search",
+            },
+        }
+        "###);
+    }
 
     #[test]
     fn default_config_is_valid() {
         let config = Config::default();
         assert!(config.validate().is_ok());
 
-        // Verify default configuration structure
+        // Even for defaults, use inline snapshot to show structure
         assert_debug_snapshot!(config, @r###"
         Config {
             server: ServerConfig {
@@ -343,14 +432,19 @@ Remember: Configuration should be predictable, well-documented, and fail fast wi
 **IMPORTANT**: Update this CLAUDE.md when configuration patterns change:
 
 1. **New Config Structs**: Document any new configuration sections
-2. **Changed Defaults**: Update examples if default values change
-3. **New Patterns**: Add guidance for new configuration patterns (e.g., new secret types)
-4. **Validation Rules**: Document new validation requirements
-5. **Breaking Changes**: Clearly mark deprecated patterns
+2. **New Modules**: Add new modules to the Module Structure section
+3. **Changed Defaults**: Update examples if default values change
+4. **New Patterns**: Add guidance for new configuration patterns (e.g., new secret types)
+5. **Validation Rules**: Document new validation requirements
+6. **Breaking Changes**: Clearly mark deprecated patterns
+7. **Test Organization**: Update test location guidance when tests are moved
 
 Update triggers:
 - Adding new configuration fields or sections
+- Creating new configuration modules
+- Moving configuration types between modules
 - Changing how secrets are handled
 - Modifying validation logic
 - Introducing new environment variable patterns
 - Changing TOML structure or naming conventions
+- Reorganizing test structure
