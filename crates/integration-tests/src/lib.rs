@@ -1,6 +1,7 @@
 mod downstream;
 pub mod headers;
 pub mod llms;
+pub mod telemetry;
 pub mod tools;
 
 use std::str::FromStr;

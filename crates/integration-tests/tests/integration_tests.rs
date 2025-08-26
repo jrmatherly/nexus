@@ -9,6 +9,7 @@ mod resilience;
 mod sse;
 mod stdio;
 mod streamable_http;
+mod telemetry;
 mod token_auth;
 mod tools;
 

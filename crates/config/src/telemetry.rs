@@ -74,6 +74,24 @@ impl TelemetryConfig {
     pub fn traces_exporters(&self) -> &ExportersConfig {
         self.tracing.exporters().unwrap_or(&self.exporters)
     }
+
+    /// Get the effective OTLP configuration for metrics
+    /// Returns metrics-specific config if set and enabled, otherwise falls back to global config
+    pub fn metrics_otlp_config(&self) -> Option<&exporters::OtlpExporterConfig> {
+        // Check metrics-specific config first
+        if let Some(metrics_exporters) = &self.metrics.exporters
+            && metrics_exporters.otlp.enabled
+        {
+            return Some(&metrics_exporters.otlp);
+        }
+
+        // Fall back to global config
+        if self.exporters.otlp.enabled {
+            Some(&self.exporters.otlp)
+        } else {
+            None
+        }
+    }
 }
 
 /// Metrics-specific configuration

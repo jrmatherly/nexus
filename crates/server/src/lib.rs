@@ -9,6 +9,7 @@ mod client_id;
 mod cors;
 mod csrf;
 mod health;
+mod metrics;
 mod rate_limit;
 mod well_known;
 
@@ -34,8 +35,22 @@ pub struct ServeConfig {
     pub config: Config,
 }
 
+/// Initialize telemetry if configured
+async fn init_telemetry(config: &Config) -> anyhow::Result<Option<telemetry::TelemetryGuard>> {
+    if let Some(telemetry_config) = &config.telemetry {
+        log::info!("Initializing telemetry subsystem");
+        Ok(Some(telemetry::init(telemetry_config).await?))
+    } else {
+        log::debug!("Telemetry not configured, skipping initialization");
+        Ok(None)
+    }
+}
+
 /// Starts and runs the Nexus server with the provided configuration.
 pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyhow::Result<()> {
+    // Initialize telemetry if configured
+    let _telemetry_guard = init_telemetry(&config).await?;
+
     let mut app = Router::new();
 
     // Create CORS layer first, like Grafbase does
@@ -158,6 +173,11 @@ pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyho
     // Apply CSRF protection to the entire app if enabled
     if config.server.csrf.enabled {
         app = csrf::inject_layer(app, &config.server.csrf);
+    }
+
+    // Apply metrics middleware if telemetry is enabled
+    if config.telemetry.is_some() {
+        app = app.layer(metrics::MetricsLayer::new());
     }
 
     let listener = TcpListener::bind(listen_address)
