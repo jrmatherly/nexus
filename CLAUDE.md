@@ -30,6 +30,7 @@ When editing code in this repository, you are working on **Nexus**, an AI router
 - **Mini-moka**: In-memory caching for rate limit buckets
 - **Redis**: Redis support for distributed rate limiting
 - **Deadpool**: Connection pooling
+- **OpenTelemetry**: Observability with metrics collection and OTLP export
 
 ## Rust Coding Guidelines
 
@@ -238,6 +239,13 @@ Comprehensive testing setup:
 - Docker Compose configuration with Hydra OAuth2 server
 - End-to-end testing scenarios
 - Authentication flow testing
+
+### Telemetry (`./crates/telemetry`)
+OpenTelemetry integration and observability:
+- **Metrics**: Counter, histogram, and gauge creation with OTLP export
+- **OTLP Support**: Export to OpenTelemetry collectors via gRPC or HTTP
+- **SDK Management**: Proper initialization and shutdown via TelemetryGuard
+- **Standard Names**: Consistent metric naming following OTel semantic conventions
 
 ### Rate Limit (`./crates/rate-limit`)
 Rate limiting functionality for the entire system:

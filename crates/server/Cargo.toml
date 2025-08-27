@@ -24,6 +24,7 @@ reqwest = { workspace = true, features = ["rustls-tls"] }
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+telemetry.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 tower.workspace = true

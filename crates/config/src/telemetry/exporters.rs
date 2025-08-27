@@ -7,8 +7,9 @@ use url::Url;
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct ExportersConfig {
-    /// OTLP exporter configuration (when present, endpoint is required)
-    pub otlp: Option<OtlpExporterConfig>,
+    /// OTLP exporter configuration
+    #[serde(default)]
+    pub otlp: OtlpExporterConfig,
 }
 
 /// OTLP exporter configuration
@@ -19,7 +20,8 @@ pub struct OtlpExporterConfig {
     #[serde(default)]
     pub enabled: bool,
 
-    /// OTLP endpoint URL (required when enabled)
+    /// OTLP endpoint URL
+    #[serde(default = "default_endpoint")]
     pub endpoint: Url,
 
     /// Protocol to use (grpc or http)
@@ -35,14 +37,28 @@ pub struct OtlpExporterConfig {
     pub batch_export: BatchExportConfig,
 }
 
-impl ExportersConfig {
-    /// Get the OTLP exporter configuration if configured
-    pub fn otlp(&self) -> Option<&OtlpExporterConfig> {
-        self.otlp.as_ref()
+fn default_endpoint() -> Url {
+    Url::parse("http://localhost:4317").expect("default URL should be valid")
+}
+
+impl Default for OtlpExporterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: default_endpoint(),
+            protocol: OtlpProtocol::default(),
+            timeout: default_timeout(),
+            batch_export: BatchExportConfig::default(),
+        }
     }
 }
 
-// No Default impl for OtlpExporterConfig since endpoint is required
+impl ExportersConfig {
+    /// Get the OTLP exporter configuration
+    pub fn otlp(&self) -> &OtlpExporterConfig {
+        &self.otlp
+    }
+}
 
 fn default_timeout() -> Duration {
     Duration::from_secs(60)
@@ -52,8 +68,10 @@ fn default_timeout() -> Duration {
 #[derive(Debug, Clone, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum OtlpProtocol {
+    /// gRPC protocol (default)
     #[default]
     Grpc,
+    /// HTTP/protobuf protocol
     Http,
 }
 

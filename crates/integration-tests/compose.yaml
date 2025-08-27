@@ -152,13 +152,56 @@ services:
       - redis
     restart: unless-stopped
 
+  # OpenTelemetry Collector for metrics, traces, and logs
+  otel-collector:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.113.0
+    command: ["--config=/etc/otel-collector-config.yml", "--set=service.telemetry.logs.level=INFO"]
+    volumes:
+      - ./docker/otel/otel-collector-config.yml:/etc/otel-collector-config.yml:ro,z
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "13133:13133" # Health check extension
+    depends_on:
+      - clickhouse
+    networks:
+      - otel
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:13133"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ClickHouse for storing OpenTelemetry data
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.10-alpine
+    ports:
+      - "9000:9000"   # Native protocol port
+      - "8123:8123"   # HTTP port
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: 1
+    volumes:
+      - ./docker/clickhouse/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro
+      - clickhouse-data:/var/lib/clickhouse
+    networks:
+      - otel
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 networks:
   hydra:
   hydra-2:
   redis:
+  otel:
 
 volumes:
   hydra-sqlite:
   hydra-2-sqlite:
   redis-tls-certs:
   redis-mtls-certs:
+  clickhouse-data:
