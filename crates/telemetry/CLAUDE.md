@@ -5,7 +5,7 @@ This crate provides OpenTelemetry integration for Nexus, handling metrics collec
 ## Purpose
 
 - Initialize OpenTelemetry SDK with OTLP exporters
-- Provide convenient metric creation functions (counter, histogram, updown_counter)
+- Provide duration recording via the `Recorder` type
 - Manage telemetry lifecycle with proper shutdown via `TelemetryGuard`
 - Export metrics to configured backends (e.g., OTLP collectors)
 
@@ -14,35 +14,40 @@ This crate provides OpenTelemetry integration for Nexus, handling metrics collec
 ```
 telemetry/
 ├── lib.rs              # Public API and convenience functions
+├── metrics.rs          # Metrics initialization and OTLP setup
 └── metrics/
-    ├── mod.rs          # Metrics initialization and OTLP setup
-    └── names.rs        # Standard metric name constants
+    ├── names.rs        # Standard metric name constants
+    └── recorder.rs     # Duration recorder for timing operations
 ```
 
 ## Metric Names
 
 All metric names follow OpenTelemetry semantic conventions and are defined as constants in `metrics::names`:
 
-- `HTTP_SERVER_REQUEST_DURATION` - HTTP request duration histogram (milliseconds)
+- `HTTP_SERVER_REQUEST_DURATION` - HTTP server request duration histogram (milliseconds)
   - Automatically provides count, sum, and distribution
-  - Attributes: http.request.method, http.route, http.response.status_code
 
 ## Usage Patterns
 
-### Creating Metrics
+### Using the Recorder for Duration Tracking
+
+The `Recorder` provides a convenient way to measure operation durations:
 
 ```rust
-use telemetry::{counter, histogram, KeyValue};
+use telemetry::metrics::Recorder;
 
-// Get metrics using convenience functions
-let request_counter = telemetry::counter(telemetry::metrics::MY_COUNTER);
-let duration_hist = telemetry::histogram(telemetry::metrics::HTTP_SERVER_REQUEST_DURATION);
+async fn handle_request() -> Result<Response, Error> {
+    let mut recorder = Recorder::new("request.duration");
+    recorder.push_attribute("method", "GET");
+    recorder.push_attribute("endpoint", "/api/users");
 
-// Record with attributes
-duration_hist.record(
-    100.0,
-    &[KeyValue::new("status", 200)]
-);
+    let response = process().await?;
+
+    recorder.push_attribute("status", response.status());
+    recorder.record(); // Records elapsed time in milliseconds
+
+    Ok(response)
+}
 ```
 
 ### Initialization
@@ -57,6 +62,6 @@ let _guard = telemetry::init(&config).await?;
 ## Key Design Decisions
 
 - **Global Meter**: Uses a single "nexus" meter for all metrics
-- **Lazy Creation**: Metrics are created on first use, not at startup
+- **Recorder-based**: Uses the `Recorder` type for duration tracking with explicit recording
 - **No Static Metrics**: Avoids static initialization issues
-- **Histogram Over Counter**: Use histograms when you need both count and distribution
+- **Histogram-based**: The Recorder uses histograms internally to provide count, sum, and distribution

@@ -27,6 +27,7 @@ serde_json.workspace = true
 telemetry.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["signal"] }
+tokio-util.workspace = true
 tower.workspace = true
 tower-http = { workspace = true, features = ["cors"] }
 url.workspace = true

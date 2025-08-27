@@ -1,8 +1,12 @@
+pub mod builder;
 pub mod execute;
+pub mod handler;
+pub mod metrics;
 pub mod search;
 
-use crate::{cache::DynamicDownstreamCache, server_builder::McpServerBuilder};
-use config::McpConfig;
+use self::builder::McpServerBuilder;
+use crate::cache::DynamicDownstreamCache;
+use config::{Config, McpConfig};
 use execute::ExecuteParameters;
 use http::request::Parts;
 use indoc::indoc;
@@ -57,8 +61,8 @@ impl Deref for McpServer {
 
 impl McpServer {
     /// Create a new MCP server builder.
-    pub fn builder(config: config::Config) -> crate::server_builder::McpServerBuilder {
-        crate::server_builder::McpServerBuilder::new(config)
+    pub fn builder(config: Config) -> McpServerBuilder {
+        McpServerBuilder::new(config)
     }
 
     pub(crate) async fn new(
@@ -166,46 +170,43 @@ impl McpServer {
         params: CallToolRequestParam,
         ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        // Extract token first (clone to avoid borrow issues)
-        let token = ctx
-            .extensions
-            .get::<Parts>()
-            .and_then(|parts| parts.extensions.get::<SecretString>())
-            .cloned();
-
-        // MCP header rules are static (applied at client initialization), no per-request transformation needed
+        // Extract token from request
+        let parts = ctx.extensions.get::<Parts>();
+        let token = parts.and_then(|p| p.extensions.get::<SecretString>()).cloned();
 
         // Get the search tool to access all tools
         let search_tool = self.get_search_tool(token.as_ref()).await?;
 
-        // Use binary search to find the tool
-        search_tool.find_exact(&params.name).ok_or_else(|| {
+        // Check if tool exists in our registry
+        if search_tool.find_exact(&params.name).is_none() {
             log::debug!("Tool '{}' not found in available tools registry", params.name);
-            ErrorData::method_not_found::<CallToolRequestMethod>()
-        })?;
+            return Err(ErrorData::method_not_found::<CallToolRequestMethod>());
+        }
 
-        // Extract server name from tool name
-        let tool_name_str = params.name.to_string(); // Clone the name to avoid borrowing issues
-        let (server_name, tool_name) = tool_name_str
-            .split_once("__")
-            .ok_or_else(|| ErrorData::invalid_params("Invalid tool name format", None))?;
+        let (server_name, tool_name) = params.name.split_once("__").ok_or_else(|| {
+            log::error!("Invalid tool name format: '{}'", params.name);
+            ErrorData::invalid_params("Invalid tool name format", None)
+        })?;
 
         log::debug!(
             "Parsing tool name '{}': server='{server_name}', tool='{tool_name}'",
-            tool_name_str
+            params.name,
         );
 
         // Check rate limits for the specific server/tool
         if let Some(manager) = &self.rate_limit_manager {
             log::debug!("Checking rate limits for server '{server_name}', tool '{tool_name}'");
+
             let rate_limit_request = rate_limit::RateLimitRequest::builder()
                 .server_tool(server_name, tool_name)
                 .build();
 
             if let Err(e) = manager.check_request(&rate_limit_request).await {
                 log::debug!("Rate limit exceeded for tool '{}': {e:?}", params.name);
-                return Err(ErrorData::internal_error("Rate limit exceeded", None));
+                // Use -32000 for rate limit errors (server-defined error in JSON-RPC 2.0 spec)
+                return Err(ErrorData::new(ErrorCode(-32000), "Rate limit exceeded", None));
             }
+
             log::debug!("Rate limit check passed for tool '{}'", params.name);
         } else {
             log::debug!("Rate limit manager not configured - skipping rate limit checks");
@@ -292,10 +293,8 @@ impl ServerHandler for McpServer {
         log::debug!("Processing tool invocation for '{}'", params.name);
 
         // Extract token from request extensions
-        let token = ctx
-            .extensions
-            .get::<Parts>()
-            .and_then(|parts| parts.extensions.get::<SecretString>());
+        let parts = ctx.extensions.get::<Parts>();
+        let token = parts.and_then(|p| p.extensions.get::<SecretString>());
 
         match params.name.as_ref() {
             "search" => {

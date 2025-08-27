@@ -3,11 +3,6 @@
 //! Records OpenTelemetry metrics for all HTTP requests following semantic conventions:
 //! - `http.server.request.duration`: Histogram of request latencies in milliseconds
 //!   (also provides count and sum automatically)
-//!
-//! Attributes recorded:
-//! - `http.request.method`: HTTP method (GET, POST, etc.)
-//! - `http.route`: Matched route pattern
-//! - `http.response.status_code`: HTTP response status code
 
 use axum::{body::Body, extract::MatchedPath};
 use http::{Request, Response};
@@ -16,9 +11,11 @@ use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll},
-    time::Instant,
 };
-use telemetry::{self, KeyValue, metrics};
+use telemetry::{
+    self,
+    metrics::{self, Recorder},
+};
 use tower::Layer;
 
 /// Layer for HTTP metrics tracking
@@ -70,10 +67,6 @@ where
     }
 
     fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
-        let start = Instant::now();
-
-        // Extract request attributes
-        let method = req.method().to_string();
         let path = req
             .extensions()
             .get::<MatchedPath>()
@@ -84,25 +77,14 @@ where
         let mut next = self.next.clone();
 
         Box::pin(async move {
+            let mut recorder = Recorder::new(metrics::HTTP_SERVER_REQUEST_DURATION);
+            recorder.push_attribute("http.request.method", req.method().to_string());
+            recorder.push_attribute("http.route", path);
+
             let response = next.call(req).await?;
+            recorder.push_attribute("http.response.status_code", response.status().as_u16() as i64);
 
-            let duration = start.elapsed().as_secs_f64() * 1000.0; // Convert to milliseconds
-            let status = response.status().as_u16();
-
-            // Following OpenTelemetry semantic conventions for HTTP metrics
-            // See: https://opentelemetry.io/docs/specs/semconv/http/http-metrics/
-            // The histogram automatically tracks count, sum, and distribution
-
-            let duration_histogram = telemetry::histogram(metrics::HTTP_SERVER_REQUEST_DURATION);
-
-            duration_histogram.record(
-                duration,
-                &[
-                    KeyValue::new("http.request.method", method),
-                    KeyValue::new("http.route", path),
-                    KeyValue::new("http.response.status_code", status as i64),
-                ],
-            );
+            recorder.record();
 
             Ok(response)
         })

@@ -25,6 +25,7 @@ use config::Config;
 use rate_limit::RateLimitLayer;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
 
 /// Configuration for serving Nexus.
@@ -33,6 +34,8 @@ pub struct ServeConfig {
     pub listen_address: SocketAddr,
     /// The deserialized Nexus TOML configuration.
     pub config: Config,
+    /// Cancellation token for graceful shutdown
+    pub shutdown_signal: CancellationToken,
 }
 
 /// Initialize telemetry if configured
@@ -47,7 +50,13 @@ async fn init_telemetry(config: &Config) -> anyhow::Result<Option<telemetry::Tel
 }
 
 /// Starts and runs the Nexus server with the provided configuration.
-pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyhow::Result<()> {
+pub async fn serve(
+    ServeConfig {
+        listen_address,
+        config,
+        shutdown_signal,
+    }: ServeConfig,
+) -> anyhow::Result<()> {
     // Initialize telemetry if configured
     let _telemetry_guard = init_telemetry(&config).await?;
 
@@ -206,10 +215,19 @@ pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyho
                 log::info!("LLM endpoint available at: https://{listen_address}{}", config.llm.path);
             }
 
-            axum_server::from_tcp_rustls(listener.into_std()?, rustls_config)
-                .serve(app.into_make_service())
-                .await
-                .map_err(|e| anyhow!("Failed to start HTTPS server: {e}"))?;
+            let server =
+                axum_server::from_tcp_rustls(listener.into_std()?, rustls_config).serve(app.into_make_service());
+
+            // Run with graceful shutdown
+            tokio::select! {
+                result = server => {
+                    result.map_err(|e| anyhow!("Failed to start HTTPS server: {e}"))?;
+                }
+                _ = shutdown_signal.cancelled() => {
+                    log::info!("Received shutdown signal, shutting down gracefully...");
+                    // The TelemetryGuard will be dropped when this function returns
+                }
+            }
         }
         None => {
             if mcp_actually_exposed {
@@ -220,9 +238,16 @@ pub async fn serve(ServeConfig { listen_address, config }: ServeConfig) -> anyho
                 log::info!("LLM endpoint available at: http://{listen_address}{}", config.llm.path);
             }
 
-            axum::serve(listener, app)
-                .await
-                .map_err(|e| anyhow!("Failed to start HTTP server: {}", e))?;
+            // Run with graceful shutdown
+            tokio::select! {
+                result = axum::serve(listener, app) => {
+                    result.map_err(|e| anyhow!("Failed to start HTTP server: {}", e))?;
+                }
+                _ = shutdown_signal.cancelled() => {
+                    log::info!("Received shutdown signal, shutting down gracefully...");
+                    // The TelemetryGuard will be dropped when this function returns
+                }
+            }
         }
     }
 

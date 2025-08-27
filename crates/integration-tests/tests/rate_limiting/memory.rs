@@ -253,12 +253,12 @@ async fn mcp_server_rate_limit() {
       {
         "request": 3,
         "success": false,
-        "error": "McpError(ErrorData { code: ErrorCode(-32603), message: \"Rate limit exceeded\", data: None })"
+        "error": "McpError(ErrorData { code: ErrorCode(-32000), message: \"Rate limit exceeded\", data: None })"
       },
       {
         "request": 4,
         "success": false,
-        "error": "McpError(ErrorData { code: ErrorCode(-32603), message: \"Rate limit exceeded\", data: None })"
+        "error": "McpError(ErrorData { code: ErrorCode(-32000), message: \"Rate limit exceeded\", data: None })"
       }
     ]
     "#);
@@ -328,12 +328,12 @@ async fn mcp_tool_specific_rate_limit() {
       {
         "request": 3,
         "success": false,
-        "error": "McpError(ErrorData { code: ErrorCode(-32603), message: \"Rate limit exceeded\", data: None })"
+        "error": "McpError(ErrorData { code: ErrorCode(-32000), message: \"Rate limit exceeded\", data: None })"
       },
       {
         "request": 4,
         "success": false,
-        "error": "McpError(ErrorData { code: ErrorCode(-32603), message: \"Rate limit exceeded\", data: None })"
+        "error": "McpError(ErrorData { code: ErrorCode(-32000), message: \"Rate limit exceeded\", data: None })"
       }
     ]
     "#);
@@ -403,7 +403,7 @@ async fn mcp_only_rate_limits_no_http_middleware() {
       "mcp_first_request_success": true,
       "mcp_first_result": "1 + 2 = 3",
       "mcp_second_request_failed": true,
-      "mcp_second_error": "McpError(ErrorData { code: ErrorCode(-32603), message: \"Rate limit exceeded\", data: None })"
+      "mcp_second_error": "McpError(ErrorData { code: ErrorCode(-32000), message: \"Rate limit exceeded\", data: None })"
     }
     "#);
 }
