@@ -81,7 +81,7 @@ tiktoken-rs = "0.7"
 tokio = { version = "1.46.1", default-features = false }
 tokio-util = "0.7"
 toml = "0.9.2"
-tonic = "0.12"
+tonic = "0.14"
 tower = "0.5.2"
 tower-http = "0.6.6"
 url = "2.5.4"
