@@ -175,9 +175,11 @@ async fn health_endpoint_separate_listener() {
     config.server.health.listen = Some(health_addr);
 
     // Start the server
+    let shutdown_signal = tokio_util::sync::CancellationToken::new();
     let serve_config = server::ServeConfig {
         listen_address: main_addr,
         config,
+        shutdown_signal: shutdown_signal.clone(),
     };
 
     drop(main_listener);

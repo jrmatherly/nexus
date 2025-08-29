@@ -1310,6 +1310,70 @@ Example error response:
 }
 ```
 
+### Telemetry
+
+Nexus supports OpenTelemetry metrics export for monitoring system performance and usage. Metrics are collected via middleware and have zero overhead when disabled.
+
+#### Metrics Configuration
+
+```toml
+[telemetry]
+service_name = "nexus-production"  # Optional, defaults to "nexus"
+
+# Resource attributes for all telemetry (optional)
+[telemetry.resource_attributes]
+environment = "production"
+region = "us-east-1"
+
+# OTLP exporter for metrics
+[telemetry.exporters.otlp]
+enabled = true                       # Default: false
+endpoint = "http://localhost:4317"   # Default: http://localhost:4317
+protocol = "grpc"                    # Default: grpc (options: grpc, http)
+timeout = "60s"                      # Default: 60s
+
+# Batch export configuration (all optional with defaults)
+[telemetry.exporters.otlp.batch_export]
+scheduled_delay = "5s"               # Default: 5s
+max_queue_size = 2048                # Default: 2048
+max_export_batch_size = 512          # Default: 512
+max_concurrent_exports = 1           # Default: 1
+```
+
+#### Available Metrics
+
+All histograms also function as counters (count field tracks number of observations).
+
+**HTTP Server Metrics:**
+- `http.server.request.duration` (histogram)
+  - Attributes: `http.route`, `http.request.method`, `http.response.status_code`
+
+**MCP Operation Metrics:**
+- `mcp.tool.call.duration` (histogram)
+  - Attributes: `tool_name`, `tool_type` (builtin/downstream), `status` (success/error), `client_id`, `group`
+  - Additional for search: `keyword_count`, `result_count`
+  - Additional for execute: `server_name` (for downstream tools)
+  - Additional for errors: `error_type`:
+    - `parse_error` - Invalid JSON (-32700)
+    - `invalid_request` - Not a valid request (-32600)
+    - `method_not_found` - Method/tool does not exist (-32601)
+    - `invalid_params` - Invalid method parameters (-32602)
+    - `internal_error` - Internal server error (-32603)
+    - `rate_limit_exceeded` - Rate limit hit (-32000)
+    - `server_error` - Other server errors (-32001 to -32099)
+    - `unknown` - Any other error code
+
+- `mcp.tools.list.duration` (histogram)
+  - Attributes: `method` (list_tools), `status`, `client_id`, `group`
+
+- `mcp.prompt.request.duration` (histogram)
+  - Attributes: `method` (list_prompts/get_prompt), `status`, `client_id`, `group`
+  - Additional for errors: `error_type` (same values as above)
+
+- `mcp.resource.request.duration` (histogram)
+  - Attributes: `method` (list_resources/read_resource), `status`, `client_id`, `group`
+  - Additional for errors: `error_type` (same values as above)
+
 ## Adding to AI Assistants
 
 ### Cursor

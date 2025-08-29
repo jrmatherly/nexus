@@ -17,6 +17,7 @@ log.workspace = true
 logforth = { workspace = true, features = ["append-fastrace", "colored", "diagnostic-fastrace", "layout-json"] }
 server.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "tokio-macros"] }
+tokio-util.workspace = true
 
 [lints]
 workspace = true

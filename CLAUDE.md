@@ -247,6 +247,17 @@ OpenTelemetry integration and observability:
 - **SDK Management**: Proper initialization and shutdown via TelemetryGuard
 - **Standard Names**: Consistent metric naming following OTel semantic conventions
 
+#### MCP Metrics Behavior
+**Important**: Metrics are collected via middleware and only execute when `telemetry.exporters.otlp.enabled = true`. Zero overhead when disabled.
+
+MCP operations emit deterministic metrics:
+- `mcp.tool.call.duration`: Includes `tool_name`, `tool_type` (builtin/downstream), `status`, `client_id`
+- Search operations include `keyword_count` and `result_count` attributes
+- Execute operations include `server_name` for downstream tools
+- Error metrics include `error_type` (e.g., `method_not_found`, `rate_limit_exceeded`)
+
+**Testing**: MCP metrics are deterministic - exact counts must match test expectations. HTTP-level metrics may vary due to batching.
+
 ### Rate Limit (`./crates/rate-limit`)
 Rate limiting functionality for the entire system:
 - **Global Rate Limits**: System-wide request limits
@@ -350,16 +361,36 @@ cd ./crates/integration-tests && docker compose up -d
 ```
 
 ### Testing
+
+**CRITICAL: Always use `cargo nextest run`, NEVER use `cargo test`**
+
+The integration tests MUST use nextest because they initialize global OpenTelemetry state. Running tests with `cargo test` causes tests to share global state across threads, leading to flaky failures and incorrect metrics attribution.
+
 ```bash
-# Run all tests
+# ALWAYS use nextest for all testing
 cargo nextest run
+
+# The .cargo/config.toml aliases 'cargo test' to 'cargo nextest run' for safety
+# But always explicitly use nextest in commands and documentation
 
 # Run tests with debug output
 env TEST_LOG=1 cargo nextest run
 
+# Run integration tests specifically
+cargo nextest run -p integration-tests
+
+# Run unit tests only
+cargo nextest run --workspace --exclude integration-tests
+
 # Approve snapshot changes
 cargo insta approve
 ```
+
+**Why nextest is required:**
+- Each test runs in its own process (not thread), providing isolation
+- Global telemetry state doesn't leak between tests
+- Tests can safely initialize their own service names and metrics
+- Prevents flaky test failures due to shared OpenTelemetry providers
 
 ### Code Quality
 ```bash

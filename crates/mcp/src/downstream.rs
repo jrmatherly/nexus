@@ -265,24 +265,20 @@ impl Downstream {
 
         let server = self.find_server(server_name).ok_or_else(|| {
             log::debug!("Server '{server_name}' not found in downstream registry");
-
             error_fn()
         })?;
 
-        self.find_tool(&params.name).ok_or_else(|| {
+        if self.find_tool(&params.name).is_none() {
             log::error!("Tool '{}' not found in tool registry", params.name);
-            error_fn()
-        })?;
+            return Err(error_fn());
+        }
 
         params.name = Cow::Owned(tool_name.to_string());
 
-        match server.call_tool(params).await {
-            Ok(result) => Ok(result),
-            Err(error) => match error {
-                rmcp::ServiceError::McpError(error_data) => Err(error_data),
-                _ => Err(ErrorData::internal_error(error.to_string(), None)),
-            },
-        }
+        server.call_tool(params).await.map_err(|error| match error {
+            rmcp::ServiceError::McpError(error_data) => error_data,
+            _ => ErrorData::internal_error(error.to_string(), None),
+        })
     }
 
     /// Gets a prompt from the appropriate downstream server.

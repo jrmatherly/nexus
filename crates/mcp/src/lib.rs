@@ -7,7 +7,6 @@ mod config;
 mod downstream;
 mod index;
 mod server;
-mod server_builder;
 
 use std::{sync::Arc, time::Duration};
 
@@ -18,6 +17,7 @@ use rmcp::{
         StreamableHttpServerConfig, StreamableHttpService, streamable_http_server::session::never::NeverSessionManager,
     },
 };
+use server::McpServer;
 
 pub use config::{RouterConfig, RouterConfigBuilder};
 
@@ -30,16 +30,18 @@ pub async fn router(
         rate_limit_manager,
     }: RouterConfig,
 ) -> anyhow::Result<Router> {
-    let mut builder = server::McpServer::builder(config.clone());
+    let path = config.mcp.path.clone();
+    let mut builder = McpServer::builder(config);
 
     if let Some(manager) = rate_limit_manager {
         builder = builder.rate_limit_manager(manager);
     }
 
-    let mcp_server = builder.build().await?;
+    // Builder now handles metrics middleware decision
+    let handler = builder.build().await?;
 
     let service = StreamableHttpService::new(
-        move || Ok(mcp_server.clone()),
+        move || Ok(handler.clone()),
         Arc::new(NeverSessionManager::default()),
         StreamableHttpServerConfig {
             sse_keep_alive: Some(Duration::from_secs(5)),
@@ -47,5 +49,5 @@ pub async fn router(
         },
     );
 
-    Ok(Router::new().route(&config.mcp.path, routing::any_service(service)))
+    Ok(Router::new().route(&path, routing::any_service(service)))
 }

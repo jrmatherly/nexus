@@ -296,6 +296,27 @@ impl McpTestClient {
             .unwrap()
     }
 
+    /// Get a specific prompt (returns Result for error testing)
+    pub async fn get_prompt_result(
+        &self,
+        name: &str,
+        arguments: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Result<rmcp::model::GetPromptResult, rmcp::ServiceError> {
+        self.service
+            .get_prompt(rmcp::model::GetPromptRequestParam {
+                name: name.to_string(),
+                arguments,
+            })
+            .await
+    }
+
+    /// Read a specific resource (returns Result for error testing)
+    pub async fn read_resource_result(&self, uri: &str) -> Result<rmcp::model::ReadResourceResult, rmcp::ServiceError> {
+        self.service
+            .read_resource(rmcp::model::ReadResourceRequestParam { uri: uri.to_string() })
+            .await
+    }
+
     /// Disconnect the client
     pub async fn disconnect(self) {
         self.service.cancel().await.unwrap();
@@ -451,8 +472,12 @@ impl LlmTestClient {
 pub struct TestServer {
     pub client: TestClient,
     pub address: SocketAddr,
-    pub cancellation_tokens: Vec<CancellationToken>,
-    _handle: tokio::task::JoinHandle<()>,
+    /// Cancellation tokens for test services (MCP mocks, LLM mocks, etc.)
+    pub test_service_tokens: Vec<CancellationToken>,
+    /// Handle to the main Nexus server task
+    _nexus_task_handle: tokio::task::JoinHandle<()>,
+    /// Shutdown signal for the main Nexus server
+    nexus_shutdown_signal: CancellationToken,
 }
 
 impl TestServer {
@@ -461,7 +486,7 @@ impl TestServer {
     }
 
     /// Start a new test server with the given TOML configuration
-    async fn start(config_toml: &str, cancellation_tokens: Vec<CancellationToken>) -> Self {
+    async fn start(config_toml: &str, test_service_tokens: Vec<CancellationToken>) -> Self {
         // Write config to a temporary file and use the proper loader to ensure validation
         let temp_dir = tempfile::tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
@@ -489,15 +514,20 @@ impl TestServer {
         // Check if TLS is configured before moving config into spawn task
         let has_tls = config.server.tls.is_some();
 
+        // Create a cancellation token for graceful shutdown of Nexus server
+        let nexus_shutdown_signal = CancellationToken::new();
+        let nexus_shutdown_signal_clone = nexus_shutdown_signal.clone();
+
         // Create the server configuration
         let serve_config = ServeConfig {
             listen_address: address,
             config,
+            shutdown_signal: nexus_shutdown_signal_clone,
         };
 
         // Start the server in a background task
         let (tx, mut rx) = tokio::sync::oneshot::channel();
-        let handle = tokio::spawn(async move {
+        let nexus_task_handle = tokio::spawn(async move {
             // Drop the listener so the server can bind to the address
             drop(listener);
 
@@ -557,8 +587,9 @@ impl TestServer {
         TestServer {
             client,
             address,
-            cancellation_tokens,
-            _handle: handle,
+            test_service_tokens,
+            _nexus_task_handle: nexus_task_handle,
+            nexus_shutdown_signal,
         }
     }
 
@@ -609,16 +640,26 @@ impl TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        for token in &self.cancellation_tokens {
+        // First, shutdown test services (MCP mocks, LLM mocks)
+        for token in &self.test_service_tokens {
             token.cancel();
         }
+
+        // Then signal graceful shutdown to the main Nexus server
+        eprintln!("DEBUG: Cancelling Nexus server shutdown signal");
+        self.nexus_shutdown_signal.cancel();
+
+        // We can't wait for the task to complete in Drop (not async)
+        // but the cancellation signal will trigger graceful shutdown
+        // The TelemetryGuard will flush when the server task exits
     }
 }
 
 #[derive(Default)]
 pub struct TestServerBuilder {
     config: String,
-    cancellation_tokens: Vec<CancellationToken>,
+    /// Cancellation tokens for test services that will be spawned
+    test_service_tokens: Vec<CancellationToken>,
 }
 
 impl TestServerBuilder {
@@ -655,7 +696,7 @@ impl TestServerBuilder {
         let (listen_addr, ct) = service.spawn().await;
 
         if let Some(ct) = ct {
-            self.cancellation_tokens.push(ct);
+            self.test_service_tokens.push(ct);
         }
 
         let protocol = if service.is_tls() { "https" } else { "http" };
@@ -723,6 +764,6 @@ impl TestServerBuilder {
     pub async fn build(self, config: &str) -> TestServer {
         let config = format!("{config}\n{}", self.config);
 
-        TestServer::start(&config, self.cancellation_tokens).await
+        TestServer::start(&config, self.test_service_tokens).await
     }
 }

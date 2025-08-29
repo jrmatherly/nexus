@@ -1,16 +1,26 @@
 //! Metrics initialization and management
 
 mod names;
+mod recorder;
 
 pub use names::*;
+pub use recorder::Recorder;
 
 use anyhow::Context;
 use config::{OtlpProtocol, TelemetryConfig};
+use opentelemetry::metrics::Meter;
 use opentelemetry_otlp::{MetricExporter, WithExportConfig};
 use opentelemetry_sdk::{
     Resource,
     metrics::{PeriodicReader, SdkMeterProvider},
 };
+
+const METER_NAME: &str = "nexus";
+
+/// Get the global meter for recording metrics
+pub fn meter() -> Meter {
+    opentelemetry::global::meter(METER_NAME)
+}
 
 /// Initialize the metrics subsystem
 pub(crate) async fn init_metrics(config: &TelemetryConfig) -> anyhow::Result<SdkMeterProvider> {
