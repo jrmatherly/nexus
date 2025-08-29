@@ -1203,7 +1203,12 @@ async fn anthropic_claude3_haiku_streaming_with_tools() {
         .iter()
         .any(|chunk| chunk["choices"][0]["delta"]["tool_calls"].is_array());
 
-    // Note: Tool streaming format varies, so we just verify streaming works
+    // We're testing tool calling, so we should have tool calls in the response
+    assert!(
+        has_tool_info,
+        "Expected tool calls in streaming response for a tool calling test"
+    );
+
     assert_eq!(chunks[0]["object"], "chat.completion.chunk");
     assert_eq!(chunks[0]["model"], "bedrock/claude3-haiku");
 }
@@ -1247,6 +1252,17 @@ async fn cohere_command_r_streaming_with_tools() {
     // Verify basic streaming structure
     assert_eq!(chunks[0]["object"], "chat.completion.chunk");
     assert_eq!(chunks[0]["model"], "bedrock/command-r");
+
+    // Check if any chunk contains tool call information
+    let has_tool_info = chunks
+        .iter()
+        .any(|chunk| chunk["choices"][0]["delta"]["tool_calls"].is_array());
+
+    // We're testing tool calling, so we should have tool calls in the response
+    assert!(
+        has_tool_info,
+        "Expected tool calls in streaming response for a tool calling test"
+    );
 
     // Check for finish reason in at least one chunk (Cohere may not have it in last chunk)
     let has_finish_reason = chunks
@@ -1479,7 +1495,7 @@ async fn streaming_claude_instant() {
 
     // Also verify chunks are valid
     let chunks = llm.stream_completions(request).await;
-    assert!(chunks.len() > 0, "Expected stream chunks, got none");
+    assert!(!chunks.is_empty(), "Expected stream chunks, got none");
 
     // Verify first chunk structure
     let first_chunk = &chunks[0];
@@ -1511,7 +1527,7 @@ async fn streaming_cohere_command_r_with_helpers() {
     let chunks = llm.stream_completions(request).await;
 
     // Should have at least one chunk
-    assert!(chunks.len() > 0, "Expected at least one chunk, got {}", chunks.len());
+    assert!(!chunks.is_empty(), "Expected at least one chunk, got {}", chunks.len());
 
     // Verify first chunk structure
     let first_chunk = &chunks[0];
@@ -1548,7 +1564,7 @@ async fn streaming_cohere_command_r_multi_turn_with_helpers() {
 
     let chunks = llm.stream_completions(request).await;
     assert!(
-        chunks.len() > 0,
+        !chunks.is_empty(),
         "Expected at least one chunk for multi-turn conversation"
     );
 
@@ -1586,7 +1602,7 @@ async fn streaming_nova_micro() {
     let chunks = llm.stream_completions(request).await;
 
     // Should have chunks
-    assert!(chunks.len() > 0, "Expected stream chunks, got none");
+    assert!(!chunks.is_empty(), "Expected stream chunks, got none");
 
     // Verify first chunk structure
     let first_chunk = &chunks[0];
@@ -1622,7 +1638,7 @@ async fn streaming_titan_express() {
     let chunks = llm.stream_completions(request).await;
 
     // Should have chunks
-    assert!(chunks.len() > 0, "Expected stream chunks, got none");
+    assert!(!chunks.is_empty(), "Expected stream chunks, got none");
 
     // Verify first chunk structure
     let first_chunk = &chunks[0];
@@ -1680,7 +1696,7 @@ async fn streaming_deepseek_r1() {
     "#);
 
     // Test content accumulation - DeepSeek R1 may produce no visible content due to internal reasoning
-    let content = llm.stream_completions_content(request).await;
+    let _content = llm.stream_completions_content(request).await;
     // Note: R1 may use all tokens for internal reasoning without producing visible output
     // This is expected behavior when it hits token limits during thinking
 }
@@ -1732,4 +1748,292 @@ async fn streaming_ai21_jamba_mini() {
     // Test that content accumulation works
     let content = llm.stream_completions_content(request).await;
     assert!(!content.is_empty(), "Expected non-empty streaming content");
+}
+
+// ============================================================================
+// Token Counting Verification Tests
+// ============================================================================
+
+#[live_provider_test(bedrock)]
+async fn verify_token_counting_claude3_sonnet() {
+    let config = create_bedrock_config(&[("claude3-sonnet", "anthropic.claude-3-sonnet-20240229-v1:0")]);
+
+    let server = TestServer::builder().build(&config).await;
+    let llm = server.llm_client("/llm");
+
+    // Use a prompt with predictable token count
+    let response = llm
+        .completions(json!({
+            "model": "bedrock/claude3-sonnet",
+            "messages": [{
+                "role": "user",
+                "content": "Count from 1 to 5"
+            }],
+            "max_tokens": 50,
+            "temperature": 0
+        }))
+        .await;
+
+    // Verify usage is present and contains valid token counts
+    let usage = response["usage"].as_object().expect("Expected usage object");
+
+    let prompt_tokens = usage["prompt_tokens"].as_u64().expect("Expected prompt_tokens");
+    let completion_tokens = usage["completion_tokens"].as_u64().expect("Expected completion_tokens");
+    let total_tokens = usage["total_tokens"].as_u64().expect("Expected total_tokens");
+
+    // Verify token counts are reasonable
+    assert!(prompt_tokens > 0, "Prompt tokens should be > 0");
+    assert!(completion_tokens > 0, "Completion tokens should be > 0");
+    assert_eq!(
+        total_tokens,
+        prompt_tokens + completion_tokens,
+        "Total should equal prompt + completion"
+    );
+
+    // Log for manual verification during test runs
+    eprintln!(
+        "Claude3 Sonnet Token Usage: prompt={}, completion={}, total={}",
+        prompt_tokens, completion_tokens, total_tokens
+    );
+}
+
+#[live_provider_test(bedrock)]
+async fn verify_token_counting_streaming_claude3_sonnet() {
+    let config = create_bedrock_config(&[("claude3-sonnet", "anthropic.claude-3-sonnet-20240229-v1:0")]);
+
+    let server = TestServer::builder().build(&config).await;
+    let llm = server.llm_client("/llm");
+
+    let request = json!({
+        "model": "bedrock/claude3-sonnet",
+        "messages": [{
+            "role": "user",
+            "content": "Count from 1 to 5"
+        }],
+        "max_tokens": 50,
+        "temperature": 0,
+        "stream": true
+    });
+
+    // Collect all chunks to find the one with usage
+    let chunks = llm.stream_completions(request).await;
+
+    // Find the chunk with usage information (should be in MessageStop event)
+    let usage_chunk = chunks
+        .iter()
+        .find(|chunk| chunk["usage"].is_object())
+        .expect("Expected to find usage in stream");
+
+    let usage = usage_chunk["usage"].as_object().expect("Expected usage object");
+
+    let prompt_tokens = usage["prompt_tokens"].as_u64().expect("Expected prompt_tokens");
+    let completion_tokens = usage["completion_tokens"].as_u64().expect("Expected completion_tokens");
+    let total_tokens = usage["total_tokens"].as_u64().expect("Expected total_tokens");
+
+    // Verify token counts
+    assert!(prompt_tokens > 0, "Prompt tokens should be > 0");
+    assert!(completion_tokens > 0, "Completion tokens should be > 0");
+    assert_eq!(
+        total_tokens,
+        prompt_tokens + completion_tokens,
+        "Total should equal prompt + completion"
+    );
+
+    eprintln!(
+        "Claude3 Sonnet Streaming Token Usage: prompt={}, completion={}, total={}",
+        prompt_tokens, completion_tokens, total_tokens
+    );
+}
+
+#[live_provider_test(bedrock)]
+async fn verify_token_counting_llama3() {
+    let config = create_bedrock_config(&[("llama3-8b", "meta.llama3-8b-instruct-v1:0")]);
+
+    let server = TestServer::builder().build(&config).await;
+    let llm = server.llm_client("/llm");
+
+    let response = llm
+        .completions(json!({
+            "model": "bedrock/llama3-8b",
+            "messages": [{
+                "role": "user",
+                "content": "What is 2+2?"
+            }],
+            "max_tokens": 20,
+            "temperature": 0
+        }))
+        .await;
+
+    // Verify usage is present
+    let usage = response["usage"].as_object().expect("Expected usage object");
+
+    let prompt_tokens = usage["prompt_tokens"].as_u64().expect("Expected prompt_tokens");
+    let completion_tokens = usage["completion_tokens"].as_u64().expect("Expected completion_tokens");
+    let total_tokens = usage["total_tokens"].as_u64().expect("Expected total_tokens");
+
+    assert!(prompt_tokens > 0, "Prompt tokens should be > 0");
+    assert!(completion_tokens > 0, "Completion tokens should be > 0");
+    assert_eq!(
+        total_tokens,
+        prompt_tokens + completion_tokens,
+        "Total should equal prompt + completion"
+    );
+
+    eprintln!(
+        "Llama3 Token Usage: prompt={}, completion={}, total={}",
+        prompt_tokens, completion_tokens, total_tokens
+    );
+}
+
+#[live_provider_test(bedrock)]
+async fn verify_token_counting_cohere_command_r() {
+    let config = create_bedrock_config(&[("command-r", "cohere.command-r-v1:0")]);
+
+    let server = TestServer::builder().build(&config).await;
+    let llm = server.llm_client("/llm");
+
+    let response = llm
+        .completions(json!({
+            "model": "bedrock/command-r",
+            "messages": [{
+                "role": "user",
+                "content": "Hello"
+            }],
+            "max_tokens": 10,
+            "temperature": 0
+        }))
+        .await;
+
+    // Verify usage is present
+    let usage = response["usage"].as_object().expect("Expected usage object");
+
+    let prompt_tokens = usage["prompt_tokens"].as_u64().expect("Expected prompt_tokens");
+    let completion_tokens = usage["completion_tokens"].as_u64().expect("Expected completion_tokens");
+    let total_tokens = usage["total_tokens"].as_u64().expect("Expected total_tokens");
+
+    assert!(prompt_tokens > 0, "Prompt tokens should be > 0");
+    assert!(completion_tokens > 0, "Completion tokens should be > 0");
+
+    assert_eq!(
+        total_tokens,
+        prompt_tokens + completion_tokens,
+        "Total should equal prompt + completion"
+    );
+
+    eprintln!(
+        "Cohere Command-R Token Usage: prompt={}, completion={}, total={}",
+        prompt_tokens, completion_tokens, total_tokens
+    );
+}
+
+#[live_provider_test(bedrock)]
+async fn verify_token_counting_mistral() {
+    let config = create_bedrock_config(&[("mistral-7b", "mistral.mistral-7b-instruct-v0:2")]);
+
+    let server = TestServer::builder().build(&config).await;
+    let llm = server.llm_client("/llm");
+
+    let response = llm
+        .completions(json!({
+            "model": "bedrock/mistral-7b",
+            "messages": [{
+                "role": "user",
+                "content": "Say hello"
+            }],
+            "max_tokens": 10,
+            "temperature": 0
+        }))
+        .await;
+
+    // Verify usage is present
+    let usage = response["usage"].as_object().expect("Expected usage object");
+
+    let prompt_tokens = usage["prompt_tokens"].as_u64().expect("Expected prompt_tokens");
+    let completion_tokens = usage["completion_tokens"].as_u64().expect("Expected completion_tokens");
+    let total_tokens = usage["total_tokens"].as_u64().expect("Expected total_tokens");
+
+    assert!(prompt_tokens > 0, "Prompt tokens should be > 0");
+    assert!(completion_tokens > 0, "Completion tokens should be > 0");
+
+    assert_eq!(
+        total_tokens,
+        prompt_tokens + completion_tokens,
+        "Total should equal prompt + completion"
+    );
+
+    eprintln!(
+        "Mistral 7B Token Usage: prompt={}, completion={}, total={}",
+        prompt_tokens, completion_tokens, total_tokens
+    );
+}
+
+#[live_provider_test(bedrock)]
+async fn verify_streaming_token_counting_multiple_models() {
+    // Test token counting in streaming mode for multiple models
+    let test_cases = vec![
+        ("llama3-8b", "meta.llama3-8b-instruct-v1:0"),
+        ("mistral-7b", "mistral.mistral-7b-instruct-v0:2"),
+        ("command-r", "cohere.command-r-v1:0"),
+    ];
+
+    for (alias, model_id) in test_cases {
+        let config = create_bedrock_config(&[(alias, model_id)]);
+        let server = TestServer::builder().build(&config).await;
+        let llm = server.llm_client("/llm");
+
+        let request = json!({
+            "model": format!("bedrock/{}", alias),
+            "messages": [{
+                "role": "user",
+                "content": "List three colors"
+            }],
+            "max_tokens": 30,
+            "temperature": 0,
+            "stream": true
+        });
+
+        let chunks = llm.stream_completions(request).await;
+
+        // Find the final chunk with usage information
+        let usage_chunk = chunks
+            .iter()
+            .rev() // Start from the end since usage is typically in the last chunk
+            .find(|chunk| chunk["usage"].is_object())
+            .unwrap();
+
+        let usage = usage_chunk["usage"].as_object().expect("Expected usage object");
+
+        let prompt_tokens = usage["prompt_tokens"].as_u64();
+        let completion_tokens = usage["completion_tokens"].as_u64();
+        let total_tokens = usage["total_tokens"].as_u64();
+
+        // All three fields should be present
+        assert!(prompt_tokens.is_some(), "Model {} should provide prompt_tokens", alias);
+        assert!(
+            completion_tokens.is_some(),
+            "Model {} should provide completion_tokens",
+            alias
+        );
+        assert!(total_tokens.is_some(), "Model {} should provide total_tokens", alias);
+
+        let prompt = prompt_tokens.unwrap();
+        let completion = completion_tokens.unwrap();
+        let total = total_tokens.unwrap();
+
+        // Verify counts are reasonable
+        assert!(prompt > 0, "Model {} prompt tokens should be > 0", alias);
+        assert!(completion > 0, "Model {} completion tokens should be > 0", alias);
+
+        assert_eq!(
+            total,
+            prompt + completion,
+            "Model {} total should equal prompt + completion",
+            alias
+        );
+
+        eprintln!(
+            "Model {} Streaming Token Usage: prompt={}, completion={}, total={}",
+            alias, prompt, completion, total
+        );
+    }
 }
