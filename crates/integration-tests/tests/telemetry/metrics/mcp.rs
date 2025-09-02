@@ -155,7 +155,7 @@ async fn search_tool_metrics() {
         WHERE
             MetricName = 'mcp.tool.call.duration'
             AND ServiceName = '{service_name}'
-            AND Attributes['client_id'] = '{client_id}'
+            AND Attributes['client.id'] = '{client_id}'
         ORDER BY TimeUnix DESC
     "#};
 
@@ -173,7 +173,7 @@ async fn search_tool_metrics() {
     let attrs: std::collections::BTreeMap<_, _> = first_row
         .attributes
         .iter()
-        .filter(|(k, _)| k.as_str() != "client_id") // Filter out dynamic client_id
+        .filter(|(k, _)| k.as_str() != "client.id") // Filter out dynamic client.id
         .cloned()
         .collect();
 
@@ -182,7 +182,7 @@ async fn search_tool_metrics() {
     // - result_count: "1" - exactly 1 tool matches: AdderTool from test_mcp_server
     insta::assert_debug_snapshot!(attrs, @r###"
     {
-        "group": "test-group",
+        "client.group": "test-group",
         "keyword_count": "1",
         "result_count": "1",
         "status": "success",
@@ -238,7 +238,7 @@ async fn execute_tool_metrics() {
         WHERE
             MetricName = 'mcp.tool.call.duration'
             AND ServiceName = '{service_name}'
-            AND Attributes['client_id'] = '{client_id}'
+            AND Attributes['client.id'] = '{client_id}'
         ORDER BY TimeUnix DESC
     "#};
 
@@ -254,14 +254,14 @@ async fn execute_tool_metrics() {
     let attrs: std::collections::BTreeMap<_, _> = tool_histograms[0]
         .attributes
         .iter()
-        .filter(|(k, _)| k.as_str() != "client_id") // Filter out dynamic client_id
+        .filter(|(k, _)| k.as_str() != "client.id") // Filter out dynamic client.id
         .cloned()
         .collect();
 
     // Use snapshot for static fields
     insta::assert_debug_snapshot!(attrs, @r###"
     {
-        "group": "execute-test-group",
+        "client.group": "execute-test-group",
         "server_name": "test_mcp_server",
         "status": "success",
         "tool_name": "adder",
@@ -272,7 +272,7 @@ async fn execute_tool_metrics() {
     // Check dynamic field separately with assert_eq!
     let full_attrs: std::collections::BTreeMap<_, _> = tool_histograms[0].attributes.iter().cloned().collect();
     // Expected: client_id matches the one we sent in the request headers
-    assert_eq!(full_attrs.get("client_id"), Some(&client_id));
+    assert_eq!(full_attrs.get("client.id"), Some(&client_id));
 }
 
 #[tokio::test]
@@ -310,7 +310,7 @@ async fn list_tools_metrics() {
         WHERE
             MetricName = 'mcp.tools.list.duration'
             AND ServiceName = '{service_name}'
-            AND Attributes['client_id'] = '{client_id}'
+            AND Attributes['client.id'] = '{client_id}'
         ORDER BY TimeUnix DESC
     "#};
 
@@ -325,12 +325,12 @@ async fn list_tools_metrics() {
 
     // Create a filtered version without dynamic client_id for snapshots
     let mut attrs_snapshot = tools_attrs.clone();
-    attrs_snapshot.remove("client_id");
+    attrs_snapshot.remove("client.id");
 
     // Snapshot the static attributes
     insta::assert_debug_snapshot!(attrs_snapshot, @r#"
     {
-        "group": "method-test-group",
+        "client.group": "method-test-group",
         "method": "list_tools",
         "status": "success",
     }
@@ -338,7 +338,7 @@ async fn list_tools_metrics() {
 
     // Separately verify the dynamic client_id exists
     // Expected: client_id matches the one we sent in the request headers
-    assert_eq!(tools_attrs.get("client_id"), Some(&client_id));
+    assert_eq!(tools_attrs.get("client.id"), Some(&client_id));
 }
 
 #[tokio::test]
@@ -368,7 +368,7 @@ async fn list_prompts_metrics() {
         WHERE
             MetricName = 'mcp.prompt.request.duration'
             AND ServiceName = '{service_name}'
-            AND Attributes['client_id'] = '{client_id}'
+            AND Attributes['client.id'] = '{client_id}'
         ORDER BY TimeUnix DESC
     "#};
 
@@ -382,14 +382,14 @@ async fn list_prompts_metrics() {
     let attrs: std::collections::BTreeMap<_, _> = metrics[0]
         .attributes
         .iter()
-        .filter(|(k, _)| k.as_str() != "client_id") // Filter out dynamic client_id
+        .filter(|(k, _)| k.as_str() != "client.id") // Filter out dynamic client.id
         .cloned()
         .collect();
 
     // Use snapshot for static fields
     insta::assert_debug_snapshot!(attrs, @r###"
     {
-        "group": "prompts-group",
+        "client.group": "prompts-group",
         "method": "list_prompts",
         "status": "success",
     }
@@ -398,7 +398,7 @@ async fn list_prompts_metrics() {
     // Check dynamic field separately with assert_eq!
     let full_attrs: std::collections::BTreeMap<_, _> = metrics[0].attributes.iter().cloned().collect();
     // Expected: client_id matches the one we sent in the request headers
-    assert_eq!(full_attrs.get("client_id"), Some(&client_id));
+    assert_eq!(full_attrs.get("client.id"), Some(&client_id));
 }
 
 #[tokio::test]
@@ -428,7 +428,7 @@ async fn list_resources_metrics() {
         WHERE
             MetricName = 'mcp.resource.request.duration'
             AND ServiceName = '{service_name}'
-            AND Attributes['client_id'] = '{client_id}'
+            AND Attributes['client.id'] = '{client_id}'
         ORDER BY TimeUnix DESC
     "#};
 
@@ -442,14 +442,14 @@ async fn list_resources_metrics() {
     let attrs: std::collections::BTreeMap<_, _> = metrics[0]
         .attributes
         .iter()
-        .filter(|(k, _)| k.as_str() != "client_id") // Filter out dynamic client_id
+        .filter(|(k, _)| k.as_str() != "client.id") // Filter out dynamic client.id
         .cloned()
         .collect();
 
     // Use snapshot for static fields
     insta::assert_debug_snapshot!(attrs, @r###"
     {
-        "group": "resources-group",
+        "client.group": "resources-group",
         "method": "list_resources",
         "status": "success",
     }
@@ -458,7 +458,7 @@ async fn list_resources_metrics() {
     // Check dynamic field separately with assert_eq!
     let full_attrs: std::collections::BTreeMap<_, _> = metrics[0].attributes.iter().cloned().collect();
     // Expected: client_id matches the one we sent in the request headers
-    assert_eq!(full_attrs.get("client_id"), Some(&client_id));
+    assert_eq!(full_attrs.get("client.id"), Some(&client_id));
 }
 
 #[tokio::test]
@@ -497,7 +497,7 @@ async fn get_prompt_success_metrics() {
         WHERE
             MetricName = 'mcp.prompt.request.duration'
             AND ServiceName = '{service_name}'
-            AND Attributes['client_id'] = '{client_id}'
+            AND Attributes['client.id'] = '{client_id}'
         ORDER BY TimeUnix DESC
     "#};
 
@@ -511,20 +511,20 @@ async fn get_prompt_success_metrics() {
     let attrs: std::collections::BTreeMap<_, _> = metrics[0]
         .attributes
         .iter()
-        .filter(|(k, _)| k.as_str() != "client_id")
+        .filter(|(k, _)| k.as_str() != "client.id")
         .cloned()
         .collect();
 
     insta::assert_debug_snapshot!(attrs, @r###"
     {
-        "group": "prompt-success-group",
+        "client.group": "prompt-success-group",
         "method": "get_prompt",
         "status": "success",
     }
     "###);
 
     let full_attrs: std::collections::BTreeMap<_, _> = metrics[0].attributes.iter().cloned().collect();
-    assert_eq!(full_attrs.get("client_id"), Some(&client_id));
+    assert_eq!(full_attrs.get("client.id"), Some(&client_id));
 }
 
 #[tokio::test]
@@ -566,7 +566,7 @@ async fn read_resource_success_metrics() {
         WHERE
             MetricName = 'mcp.resource.request.duration'
             AND ServiceName = '{service_name}'
-            AND Attributes['client_id'] = '{client_id}'
+            AND Attributes['client.id'] = '{client_id}'
         ORDER BY TimeUnix DESC
     "#};
 
@@ -580,20 +580,20 @@ async fn read_resource_success_metrics() {
     let attrs: std::collections::BTreeMap<_, _> = metrics[0]
         .attributes
         .iter()
-        .filter(|(k, _)| k.as_str() != "client_id")
+        .filter(|(k, _)| k.as_str() != "client.id")
         .cloned()
         .collect();
 
     insta::assert_debug_snapshot!(attrs, @r###"
     {
-        "group": "resource-success-group",
+        "client.group": "resource-success-group",
         "method": "read_resource",
         "status": "success",
     }
     "###);
 
     let full_attrs: std::collections::BTreeMap<_, _> = metrics[0].attributes.iter().cloned().collect();
-    assert_eq!(full_attrs.get("client_id"), Some(&client_id));
+    assert_eq!(full_attrs.get("client.id"), Some(&client_id));
 }
 
 #[tokio::test]
@@ -623,7 +623,7 @@ async fn get_prompt_error_metrics() {
         WHERE
             MetricName = 'mcp.prompt.request.duration'
             AND ServiceName = '{service_name}'
-            AND Attributes['client_id'] = '{client_id}'
+            AND Attributes['client.id'] = '{client_id}'
         ORDER BY TimeUnix DESC
     "#};
 
@@ -637,15 +637,15 @@ async fn get_prompt_error_metrics() {
     let attrs: std::collections::BTreeMap<_, _> = metrics[0]
         .attributes
         .iter()
-        .filter(|(k, _)| k.as_str() != "client_id") // Filter out dynamic client_id
+        .filter(|(k, _)| k.as_str() != "client.id") // Filter out dynamic client.id
         .cloned()
         .collect();
 
     // Use snapshot for static fields
     insta::assert_debug_snapshot!(attrs, @r#"
     {
-        "error_type": "method_not_found",
-        "group": "error-group",
+        "client.group": "error-group",
+        "error.type": "method_not_found",
         "method": "get_prompt",
         "status": "error",
     }
@@ -654,7 +654,7 @@ async fn get_prompt_error_metrics() {
     // Check dynamic field separately with assert_eq!
     let full_attrs: std::collections::BTreeMap<_, _> = metrics[0].attributes.iter().cloned().collect();
     // Expected: client_id matches the one we sent in the request headers
-    assert_eq!(full_attrs.get("client_id"), Some(&client_id));
+    assert_eq!(full_attrs.get("client.id"), Some(&client_id));
 }
 
 #[tokio::test]
@@ -684,7 +684,7 @@ async fn read_resource_error_metrics() {
         WHERE
             MetricName = 'mcp.resource.request.duration'
             AND ServiceName = '{service_name}'
-            AND Attributes['client_id'] = '{client_id}'
+            AND Attributes['client.id'] = '{client_id}'
         ORDER BY TimeUnix DESC
     "#};
 
@@ -698,15 +698,15 @@ async fn read_resource_error_metrics() {
     let attrs: std::collections::BTreeMap<_, _> = metrics[0]
         .attributes
         .iter()
-        .filter(|(k, _)| k.as_str() != "client_id") // Filter out dynamic client_id
+        .filter(|(k, _)| k.as_str() != "client.id") // Filter out dynamic client.id
         .cloned()
         .collect();
 
     // Use snapshot for static fields
     insta::assert_debug_snapshot!(attrs, @r#"
     {
-        "error_type": "method_not_found",
-        "group": "error-group",
+        "client.group": "error-group",
+        "error.type": "method_not_found",
         "method": "read_resource",
         "status": "error",
     }
@@ -715,7 +715,7 @@ async fn read_resource_error_metrics() {
     // Check dynamic field separately with assert_eq!
     let full_attrs: std::collections::BTreeMap<_, _> = metrics[0].attributes.iter().cloned().collect();
     // Expected: client_id matches the one we sent in the request headers
-    assert_eq!(full_attrs.get("client_id"), Some(&client_id));
+    assert_eq!(full_attrs.get("client.id"), Some(&client_id));
 }
 
 #[tokio::test]
@@ -748,8 +748,8 @@ async fn execute_invalid_tool_name_metrics() {
         WHERE
             MetricName = 'mcp.tool.call.duration'
             AND ServiceName = '{service_name}'
-            AND Attributes['client_id'] = '{client_id}'
-            AND Attributes['error_type'] = 'method_not_found'
+            AND Attributes['client.id'] = '{client_id}'
+            AND Attributes['error.type'] = 'method_not_found'
         ORDER BY TimeUnix DESC
     "#};
 
@@ -763,15 +763,15 @@ async fn execute_invalid_tool_name_metrics() {
     let attrs: std::collections::BTreeMap<_, _> = error_metrics[0]
         .attributes
         .iter()
-        .filter(|(k, _)| k.as_str() != "client_id") // Filter out dynamic client_id
+        .filter(|(k, _)| k.as_str() != "client.id") // Filter out dynamic client.id
         .cloned()
         .collect();
 
     // Use snapshot for static fields
     insta::assert_debug_snapshot!(attrs, @r#"
     {
-        "error_type": "method_not_found",
-        "group": "error-group",
+        "client.group": "error-group",
+        "error.type": "method_not_found",
         "status": "error",
         "tool_name": "invalidtoolname",
         "tool_type": "downstream",
@@ -781,7 +781,7 @@ async fn execute_invalid_tool_name_metrics() {
     // Check dynamic field separately with assert_eq!
     let full_attrs: std::collections::BTreeMap<_, _> = error_metrics[0].attributes.iter().cloned().collect();
     // Expected: client_id matches the one we sent in the request headers
-    assert_eq!(full_attrs.get("client_id"), Some(&client_id));
+    assert_eq!(full_attrs.get("client.id"), Some(&client_id));
 }
 
 #[tokio::test]
@@ -816,8 +816,8 @@ async fn execute_server_not_found_metrics() {
         WHERE
             MetricName = 'mcp.tool.call.duration'
             AND ServiceName = '{service_name}'
-            AND Attributes['client_id'] = '{client_id}'
-            AND Attributes['error_type'] = 'method_not_found'
+            AND Attributes['client.id'] = '{client_id}'
+            AND Attributes['error.type'] = 'method_not_found'
         ORDER BY TimeUnix DESC
     "#};
 
@@ -831,15 +831,15 @@ async fn execute_server_not_found_metrics() {
     let attrs: std::collections::BTreeMap<_, _> = error_metrics[0]
         .attributes
         .iter()
-        .filter(|(k, _)| k.as_str() != "client_id") // Filter out dynamic client_id
+        .filter(|(k, _)| k.as_str() != "client.id") // Filter out dynamic client.id
         .cloned()
         .collect();
 
     // Use snapshot for static fields
     insta::assert_debug_snapshot!(attrs, @r#"
     {
-        "error_type": "method_not_found",
-        "group": "error-group",
+        "client.group": "error-group",
+        "error.type": "method_not_found",
         "status": "error",
         "tool_name": "nonexistent_server__some_tool",
         "tool_type": "downstream",
@@ -849,7 +849,7 @@ async fn execute_server_not_found_metrics() {
     // Check dynamic field separately with assert_eq!
     let full_attrs: std::collections::BTreeMap<_, _> = error_metrics[0].attributes.iter().cloned().collect();
     // Expected: client_id matches the one we sent in the request headers
-    assert_eq!(full_attrs.get("client_id"), Some(&client_id));
+    assert_eq!(full_attrs.get("client.id"), Some(&client_id));
 }
 
 #[tokio::test]
@@ -884,8 +884,8 @@ async fn execute_tool_not_found_metrics() {
         WHERE
             MetricName = 'mcp.tool.call.duration'
             AND ServiceName = '{service_name}'
-            AND Attributes['client_id'] = '{client_id}'
-            AND Attributes['error_type'] = 'method_not_found'
+            AND Attributes['client.id'] = '{client_id}'
+            AND Attributes['error.type'] = 'method_not_found'
         ORDER BY TimeUnix DESC
     "#};
 
@@ -899,15 +899,15 @@ async fn execute_tool_not_found_metrics() {
     let attrs: std::collections::BTreeMap<_, _> = error_metrics[0]
         .attributes
         .iter()
-        .filter(|(k, _)| k.as_str() != "client_id") // Filter out dynamic client_id
+        .filter(|(k, _)| k.as_str() != "client.id") // Filter out dynamic client.id
         .cloned()
         .collect();
 
     // Use snapshot for static fields
     insta::assert_debug_snapshot!(attrs, @r#"
     {
-        "error_type": "method_not_found",
-        "group": "error-group",
+        "client.group": "error-group",
+        "error.type": "method_not_found",
         "status": "error",
         "tool_name": "test_mcp_server__nonexistent_tool",
         "tool_type": "downstream",
@@ -917,7 +917,7 @@ async fn execute_tool_not_found_metrics() {
     // Check dynamic field separately with assert_eq!
     let full_attrs: std::collections::BTreeMap<_, _> = error_metrics[0].attributes.iter().cloned().collect();
     // Expected: client_id matches the one we sent in the request headers
-    assert_eq!(full_attrs.get("client_id"), Some(&client_id));
+    assert_eq!(full_attrs.get("client.id"), Some(&client_id));
 }
 
 #[tokio::test]
@@ -955,8 +955,8 @@ async fn downstream_rate_limit_exceeded_metrics() {
         WHERE
             MetricName = 'mcp.tool.call.duration'
             AND ServiceName = '{service_name}'
-            AND Attributes['client_id'] = '{client_id}'
-            AND Attributes['error_type'] = 'rate_limit_exceeded'
+            AND Attributes['client.id'] = '{client_id}'
+            AND Attributes['error.type'] = 'rate_limit_exceeded'
         ORDER BY TimeUnix DESC
     "#};
 
@@ -970,25 +970,25 @@ async fn downstream_rate_limit_exceeded_metrics() {
     let attrs: std::collections::BTreeMap<_, _> = error_metrics[0]
         .attributes
         .iter()
-        .filter(|(k, _)| k.as_str() != "client_id")
+        .filter(|(k, _)| k.as_str() != "client.id")
         .cloned()
         .collect();
 
     // Verify the error is tracked as rate_limit_exceeded
-    insta::assert_debug_snapshot!(attrs, @r###"
+    insta::assert_debug_snapshot!(attrs, @r#"
     {
-        "error_type": "rate_limit_exceeded",
-        "group": "rate-limit-group",
+        "client.group": "rate-limit-group",
+        "error.type": "rate_limit_exceeded",
         "status": "error",
         "tool_name": "rate_limit_server__failing_tool",
         "tool_type": "downstream",
     }
-    "###);
+    "#);
 
     // Verify client_id is present
     let full_attrs: std::collections::BTreeMap<_, _> = error_metrics[0].attributes.iter().cloned().collect();
     // Expected: client_id matches the one we sent in the request headers
-    assert_eq!(full_attrs.get("client_id"), Some(&client_id));
+    assert_eq!(full_attrs.get("client.id"), Some(&client_id));
 }
 
 #[tokio::test]
@@ -1059,8 +1059,8 @@ async fn nexus_rate_limit_exceeded_metrics() {
         WHERE
             MetricName = 'mcp.tool.call.duration'
             AND ServiceName = '{service_name}'
-            AND Attributes['client_id'] = '{client_id}'
-            AND Attributes['error_type'] = 'rate_limit_exceeded'
+            AND Attributes['client.id'] = '{client_id}'
+            AND Attributes['error.type'] = 'rate_limit_exceeded'
         ORDER BY TimeUnix DESC
     "#};
 
@@ -1074,24 +1074,24 @@ async fn nexus_rate_limit_exceeded_metrics() {
     let attrs: std::collections::BTreeMap<_, _> = error_metrics[0]
         .attributes
         .iter()
-        .filter(|(k, _)| k.as_str() != "client_id")
+        .filter(|(k, _)| k.as_str() != "client.id")
         .cloned()
         .collect();
 
     // Verify the error is tracked as rate_limit_exceeded from Nexus itself
     // Note: server_name is not included when Nexus rate limits before reaching the server
-    insta::assert_debug_snapshot!(attrs, @r###"
+    insta::assert_debug_snapshot!(attrs, @r#"
     {
-        "error_type": "rate_limit_exceeded",
-        "group": "nexus-limit-group",
+        "client.group": "nexus-limit-group",
+        "error.type": "rate_limit_exceeded",
         "status": "error",
         "tool_name": "test_server__adder",
         "tool_type": "downstream",
     }
-    "###);
+    "#);
 
     // Verify client_id is present
     let full_attrs: std::collections::BTreeMap<_, _> = error_metrics[0].attributes.iter().cloned().collect();
     // Expected: client_id matches the one we sent in the request headers
-    assert_eq!(full_attrs.get("client_id"), Some(&client_id));
+    assert_eq!(full_attrs.get("client.id"), Some(&client_id));
 }

@@ -163,7 +163,7 @@ impl RateLimitStorage for RedisStorage {
             }
             Err(e) => {
                 cmd_recorder.push_attribute("status", "error");
-                cmd_recorder.push_attribute("error_type", "script_execution");
+                cmd_recorder.push_attribute("error.type", "script_execution");
                 cmd_recorder.record();
                 return Err(StorageError::Query(format!("Rate limit script failed: {e}")));
             }
@@ -247,7 +247,7 @@ impl RateLimitStorage for RedisStorage {
             }
             Err(e) => {
                 cmd_recorder.push_attribute("status", "error");
-                cmd_recorder.push_attribute("error_type", "script_execution");
+                cmd_recorder.push_attribute("error.type", "script_execution");
                 cmd_recorder.record();
                 return Err(StorageError::Query(format!("Token rate limit script failed: {e}")));
             }
