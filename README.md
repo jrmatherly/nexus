@@ -1374,6 +1374,45 @@ All histograms also function as counters (count field tracks number of observati
   - Attributes: `method` (list_resources/read_resource), `status`, `client_id`, `group`
   - Additional for errors: `error_type` (same values as above)
 
+**LLM Operation Metrics:**
+- `gen_ai.client.operation.duration` (histogram)
+  - Tracks the total duration of LLM chat completion operations
+  - Attributes:
+    - `gen_ai.system` (always "nexus.llm")
+    - `gen_ai.operation.name` (always "chat.completions")
+    - `gen_ai.request.model` (e.g., "openai/gpt-4")
+    - `gen_ai.response.finish_reason` (stop/length/tool_calls/content_filter)
+    - `client.id` (from x-client-id header)
+    - `client.group` (from x-client-group header)
+    - `error.type` (for failed requests):
+      - `invalid_request` - Malformed request
+      - `authentication_failed` - Invalid API key
+      - `insufficient_quota` - Quota exceeded
+      - `model_not_found` - Unknown model
+      - `rate_limit_exceeded` - Provider or token rate limit hit
+      - `streaming_not_supported` - Streaming unavailable for model
+      - `invalid_model_format` - Incorrect model name format
+      - `provider_not_found` - Unknown provider
+      - `internal_error` - Server error
+      - `provider_api_error` - Upstream provider error
+      - `connection_error` - Network failure
+
+- `gen_ai.client.time_to_first_token` (histogram)
+  - Tracks time until first token in streaming responses
+  - Attributes: `gen_ai.system`, `gen_ai.operation.name`, `gen_ai.request.model`, `client.id`, `client.group`
+
+- `gen_ai.client.input.token.usage` (counter)
+  - Cumulative input token consumption
+  - Attributes: `gen_ai.system`, `gen_ai.request.model`, `client.id`, `client.group`
+
+- `gen_ai.client.output.token.usage` (counter)
+  - Cumulative output token consumption
+  - Attributes: `gen_ai.system`, `gen_ai.request.model`, `client.id`, `client.group`
+
+- `gen_ai.client.total.token.usage` (counter)
+  - Cumulative total token consumption (input + output)
+  - Attributes: `gen_ai.system`, `gen_ai.request.model`, `client.id`, `client.group`
+
 ## Adding to AI Assistants
 
 ### Cursor

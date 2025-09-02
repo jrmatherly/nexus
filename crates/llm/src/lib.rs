@@ -7,7 +7,6 @@ use axum::{
     response::{IntoResponse, Sse, sse::Event},
     routing::{get, post},
 };
-use config::LlmConfig;
 use futures::StreamExt;
 use messages::ChatCompletionRequest;
 
@@ -19,14 +18,15 @@ mod server;
 pub mod token_counter;
 
 pub use error::LlmError;
-use server::LlmServer;
+use server::{LlmHandler, LlmServerBuilder};
 
 pub type Result<T> = std::result::Result<T, LlmError>;
 
 /// Creates an axum router for LLM endpoints.
-pub async fn router(config: LlmConfig, storage_config: &config::StorageConfig) -> anyhow::Result<Router> {
+pub async fn router(config: &config::Config) -> anyhow::Result<Router> {
     let server = Arc::new(
-        LlmServer::new(config.clone(), storage_config)
+        LlmServerBuilder::new(config)
+            .build()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to initialize LLM server: {e}"))?,
     );
@@ -36,7 +36,7 @@ pub async fn router(config: LlmConfig, storage_config: &config::StorageConfig) -
         .route("/v1/models", get(list_models))
         .with_state(server);
 
-    Ok(Router::new().nest(&config.path, ai_routes))
+    Ok(Router::new().nest(&config.llm.path, ai_routes))
 }
 
 /// Handle chat completion requests.
@@ -45,7 +45,7 @@ pub async fn router(config: LlmConfig, storage_config: &config::StorageConfig) -
 /// When `stream: true` is set in the request, the response is sent as
 /// Server-Sent Events (SSE). Otherwise, a standard JSON response is returned.
 async fn chat_completions(
-    State(server): State<Arc<LlmServer>>,
+    State(server): State<Arc<LlmHandler>>,
     headers: HeaderMap,
     client_identity: Option<Extension<config::ClientIdentity>>,
     Json(request): Json<ChatCompletionRequest>,
@@ -65,31 +65,6 @@ async fn chat_completions(
         );
     } else {
         log::debug!("No client identity found in request extensions");
-    }
-
-    // Check token rate limits
-    if let Some(wait_duration) = server.check_rate_limit(&context, &request).await {
-        // Duration::MAX is used as a sentinel value to indicate the request can never succeed
-        // (requires more tokens than the rate limit allows)
-        if wait_duration == std::time::Duration::MAX {
-            log::debug!("Request requires more tokens than rate limit allows - cannot be fulfilled");
-
-            return Err(LlmError::RateLimitExceeded {
-                message: "Token rate limit exceeded. Request requires more tokens than the configured limit allows and cannot be fulfilled.".to_string(),
-            });
-        } else {
-            log::debug!("Request rate limited, need to wait {:?}", wait_duration);
-
-            return Err(LlmError::RateLimitExceeded {
-                message: "Token rate limit exceeded. Please try again later.".to_string(),
-            });
-        }
-    } else {
-        log::debug!(
-            "Token rate limit check passed for client_id={:?}, group={:?}",
-            context.client_id,
-            context.group
-        );
     }
 
     // Check if streaming is requested
@@ -135,8 +110,8 @@ async fn chat_completions(
 }
 
 /// Handle list models requests.
-async fn list_models(State(server): State<Arc<LlmServer>>) -> Result<impl IntoResponse> {
-    let response = server.list_models();
+async fn list_models(State(server): State<Arc<LlmHandler>>) -> Result<impl IntoResponse> {
+    let response = server.models();
 
     log::debug!("Returning {} models", response.data.len());
     Ok(Json(response))

@@ -11,9 +11,10 @@ repository.workspace = true
 proc-macro = true
 
 [dependencies]
-# Minimal dependencies for fast compilation
+# Dependencies for proc macro with proper span preservation
 proc-macro2.workspace = true
 quote.workspace = true
+syn = { workspace = true, features = ["full", "parsing"] }
 
 [lints]
 workspace = true

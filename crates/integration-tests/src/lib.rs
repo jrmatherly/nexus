@@ -135,8 +135,10 @@ pub struct McpTestClient {
 
 /// LLM client for testing LLM API functionality
 pub struct LlmTestClient {
+    // NEVER make this public - always use the helper methods instead of raw client access
     client: TestClient,
     base_path: String,
+    custom_headers: HeaderMap,
 }
 
 impl McpTestClient {
@@ -326,7 +328,18 @@ impl McpTestClient {
 impl LlmTestClient {
     /// Create a new LLM test client
     pub fn new(client: TestClient, base_path: String) -> Self {
-        Self { client, base_path }
+        Self {
+            client,
+            base_path,
+            custom_headers: HeaderMap::new(),
+        }
+    }
+
+    /// Add a custom header to be included in all requests
+    pub fn push_header(&mut self, key: &str, value: impl AsRef<str>) {
+        let header_name = reqwest::header::HeaderName::from_bytes(key.as_bytes()).unwrap();
+        let header_value = HeaderValue::from_str(value.as_ref()).unwrap();
+        self.custom_headers.insert(header_name, header_value);
     }
 
     /// List available models
@@ -396,10 +409,21 @@ impl LlmTestClient {
 
     /// Send a chat completion request and return the raw response
     async fn send_completion_request(&self, request: serde_json::Value) -> reqwest::Response {
-        self.client
-            .post(&format!("{}/v1/chat/completions", self.base_path), &request)
-            .await
-            .unwrap()
+        let mut req = self
+            .client
+            .client
+            .post(format!(
+                "{}{}/v1/chat/completions",
+                self.client.base_url, self.base_path
+            ))
+            .json(&request);
+
+        // Add any custom headers
+        for (key, value) in &self.custom_headers {
+            req = req.header(key.clone(), value.clone());
+        }
+
+        req.send().await.unwrap()
     }
 
     /// Send a completion request expecting an error response

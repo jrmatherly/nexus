@@ -1,9 +1,9 @@
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
+use syn::{ItemFn, parse_macro_input};
 
-/// A fast proc macro for marking tests as live provider tests.
-/// Optimized for minimal compilation overhead by avoiding full AST parsing.
+/// A proc macro for marking tests as live provider tests.
+/// Preserves spans for better error reporting and LSP support.
 ///
 /// # Usage
 /// ```
@@ -17,12 +17,17 @@ use quote::quote;
 /// All live tests are marked with `#[ignore]` by default.
 #[proc_macro_attribute]
 pub fn live_provider_test(args: TokenStream, input: TokenStream) -> TokenStream {
-    // Fast path: just grab provider name as string, no parsing
+    // Parse provider name
     let provider = args.to_string().trim().to_string();
 
-    // Extract just the function name using minimal string operations
-    let input_str = input.to_string();
-    let fn_name = extract_function_name(&input_str);
+    // Parse the input function properly to preserve spans
+    let input_fn = parse_macro_input!(input as ItemFn);
+
+    // Extract function components
+    let fn_name = input_fn.sig.ident.to_string();
+    let fn_body = &input_fn.block;
+    let fn_sig = &input_fn.sig;
+    let is_async = fn_sig.asyncness.is_some();
 
     // Generate environment variable name
     let env_var = format!("{}_LIVE_TESTS", provider.to_uppercase());
@@ -31,18 +36,10 @@ pub fn live_provider_test(args: TokenStream, input: TokenStream) -> TokenStream 
     let test_name = format!("live_{}_{}", provider, fn_name);
     let test_ident = quote::format_ident!("{}", test_name);
 
-    // Extract the async keyword if present (simple string check)
-    let is_async = input_str.trim_start().starts_with("async ");
+    // Build the new function signature with the test name
     let async_token = if is_async { quote!(async) } else { quote!() };
 
-    // Find where the function body starts (after the first {)
-    let body_start = input_str.find('{').unwrap_or(0);
-
-    // Extract just the function body
-    let body = &input_str[body_start..];
-    let body_tokens: TokenStream2 = body.parse().unwrap_or_else(|_| quote!({}));
-
-    // Generate the wrapped test with minimal overhead
+    // Generate the wrapped test preserving the original body's spans
     let output = quote! {
         #[tokio::test]
         #[ignore]
@@ -61,26 +58,10 @@ pub fn live_provider_test(args: TokenStream, input: TokenStream) -> TokenStream 
             // Log execution (only when actually running)
             eprintln!("Running live {} test: {}", #provider, #fn_name);
 
-            // Original function body
-            #body_tokens
+            // Original function body with preserved spans
+            #fn_body
         }
     };
 
     TokenStream::from(output)
-}
-
-/// Extract function name from source using simple string operations.
-/// Avoids full syn parsing for better compilation performance.
-fn extract_function_name(input: &str) -> String {
-    // Look for "fn " pattern
-    if let Some(fn_pos) = input.find("fn ") {
-        let after_fn = &input[fn_pos + 3..];
-        // Take characters until we hit a non-identifier character
-        let name_end = after_fn
-            .find(|c: char| !c.is_alphanumeric() && c != '_')
-            .unwrap_or(after_fn.len());
-        after_fn[..name_end].to_string()
-    } else {
-        "unknown".to_string()
-    }
 }

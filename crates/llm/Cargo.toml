@@ -22,12 +22,14 @@ futures.workspace = true
 header-rules.workspace = true
 itertools.workspace = true
 log.workspace = true
+opentelemetry.workspace = true
 rate-limit.workspace = true
 reqwest = { workspace = true, features = ["json", "stream"] }
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sonic-rs.workspace = true
+telemetry.workspace = true
 thiserror.workspace = true
 tiktoken-rs.workspace = true
 uuid.workspace = true
