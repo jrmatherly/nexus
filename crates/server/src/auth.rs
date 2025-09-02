@@ -102,6 +102,12 @@ where
         let mut next = self.next.clone();
         let layer = self.layer.clone();
 
+        // Skip authentication for OPTIONS requests (CORS preflight)
+        // These requests won't have authentication headers
+        if req.method() == http::Method::OPTIONS {
+            return Box::pin(async move { next.call(req).await });
+        }
+
         let (mut parts, body) = req.into_parts();
 
         Box::pin(async move {

@@ -151,30 +151,40 @@ async fn access_denied_malformed_token() {
 }
 
 #[tokio::test]
-async fn options_request_with_oauth() {
+async fn options_request_bypasses_oauth_for_cors() {
     let config = super::oauth_config_basic();
     let server = TestServer::builder().build(config).await;
 
+    // OPTIONS requests should succeed without auth (for CORS preflight)
     let response = server
         .client
         .request(reqwest::Method::OPTIONS, "/mcp")
+        .header("Origin", "https://example.com")
+        .header("Access-Control-Request-Method", "POST")
         .send()
         .await
         .unwrap();
 
-    assert_eq!(response.status(), 401, "OPTIONS requires auth on MCP endpoint");
+    assert_eq!(
+        response.status(),
+        200,
+        "OPTIONS should succeed without auth for CORS preflight"
+    );
 
+    // OPTIONS with auth should also work
     let (server, access_token) = super::setup_hydra_test().await.unwrap();
 
     let auth_response = server
         .client
         .request(reqwest::Method::OPTIONS, "/mcp")
         .authorization(&access_token)
+        .header("Origin", "https://example.com")
+        .header("Access-Control-Request-Method", "POST")
         .send()
         .await
         .unwrap();
 
-    assert_ne!(auth_response.status(), 401, "OPTIONS should work with auth");
+    assert_eq!(auth_response.status(), 200, "OPTIONS should also work with auth");
 }
 
 #[tokio::test]
