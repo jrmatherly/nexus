@@ -41,3 +41,15 @@ pub const GEN_AI_CLIENT_TOTAL_TOKEN_USAGE: &str = "gen_ai.client.total.token.usa
 /// Time to first token in milliseconds (streaming only)
 /// Tracks the duration until the first token is received in a streaming response
 pub const GEN_AI_CLIENT_TIME_TO_FIRST_TOKEN: &str = "gen_ai.client.time_to_first_token";
+
+/// Redis command execution duration in milliseconds
+/// Tracks the duration of Redis operations (Lua scripts)
+pub const REDIS_COMMAND_DURATION: &str = "redis.command.duration";
+
+/// Redis connection pool connections in use
+/// Gauge tracking the number of connections currently checked out from the pool
+pub const REDIS_POOL_CONNECTIONS_IN_USE: &str = "redis.pool.connections.in_use";
+
+/// Redis connection pool connections available
+/// Gauge tracking the number of connections available in the pool
+pub const REDIS_POOL_CONNECTIONS_AVAILABLE: &str = "redis.pool.connections.available";

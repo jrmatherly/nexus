@@ -5105,7 +5105,9 @@ dependencies = [
  "governor",
  "log",
  "mini-moka",
+ "opentelemetry",
  "redis",
+ "telemetry",
  "thiserror 2.0.16",
  "tokio",
 ]

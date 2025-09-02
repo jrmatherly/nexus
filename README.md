@@ -1413,6 +1413,24 @@ All histograms also function as counters (count field tracks number of observati
   - Cumulative total token consumption (input + output)
   - Attributes: `gen_ai.system`, `gen_ai.request.model`, `client.id`, `client.group`
 
+**Redis Storage Metrics (when rate limiting with Redis is enabled):**
+- `redis.command.duration` (histogram)
+  - Tracks Redis command execution times
+  - Attributes:
+    - `operation` - The Redis operation type:
+      - `check_and_consume` - HTTP rate limit checking
+      - `check_and_consume_tokens` - Token-based rate limit checking
+    - `status` (success/error)
+    - `tokens` (for token operations) - Number of tokens checked
+
+- `redis.pool.connections.in_use` (gauge)
+  - Current number of connections in use from the pool
+  - No additional attributes
+
+- `redis.pool.connections.available` (gauge)
+  - Current number of available connections in the pool
+  - No additional attributes
+
 ## Adding to AI Assistants
 
 ### Cursor

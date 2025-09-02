@@ -3,6 +3,9 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use redis::Script;
+use telemetry::metrics::{
+    REDIS_COMMAND_DURATION, REDIS_POOL_CONNECTIONS_AVAILABLE, REDIS_POOL_CONNECTIONS_IN_USE, Recorder,
+};
 
 use super::redis_pool::{Pool, create_pool};
 use super::{RateLimitContext, RateLimitResult, RateLimitStorage, StorageError, TokenRateLimitContext};
@@ -27,6 +30,9 @@ pub struct RedisStorage {
     response_timeout: Duration,
     rate_limit_script: Script,
     rate_limit_tokens_script: Script,
+    /// Metrics gauges for connection pool monitoring
+    connections_in_use_gauge: opentelemetry::metrics::Gauge<u64>,
+    connections_available_gauge: opentelemetry::metrics::Gauge<u64>,
 }
 
 impl RedisStorage {
@@ -51,6 +57,14 @@ impl RedisStorage {
         let rate_limit_script = Script::new(RATE_LIMIT_SCRIPT);
         let rate_limit_tokens_script = Script::new(RATE_LIMIT_TOKENS_SCRIPT);
 
+        // Initialize metrics gauges
+        let connections_in_use_gauge = telemetry::metrics::meter()
+            .u64_gauge(REDIS_POOL_CONNECTIONS_IN_USE)
+            .build();
+        let connections_available_gauge = telemetry::metrics::meter()
+            .u64_gauge(REDIS_POOL_CONNECTIONS_AVAILABLE)
+            .build();
+
         Ok(Self {
             pool,
             key_prefix: config
@@ -60,6 +74,8 @@ impl RedisStorage {
             response_timeout: config.response_timeout.unwrap_or_else(|| Duration::from_secs(1)),
             rate_limit_script,
             rate_limit_tokens_script,
+            connections_in_use_gauge,
+            connections_available_gauge,
         })
     }
 
@@ -81,6 +97,18 @@ impl RedisStorage {
         let previous_key = format!("{}{}:{previous_bucket}", self.key_prefix, key);
 
         (current_key, previous_key, window_size, bucket_percentage)
+    }
+
+    /// Record pool metrics (connections in use and available)
+    fn record_pool_metrics(&self) {
+        let status = self.pool.status();
+
+        // Record connections in use
+        self.connections_in_use_gauge
+            .record(status.size as u64 - status.available as u64, &[]);
+
+        // Record connections available
+        self.connections_available_gauge.record(status.available as u64, &[]);
     }
 }
 
@@ -108,9 +136,16 @@ impl RateLimitStorage for RedisStorage {
             .await
             .map_err(|e| StorageError::Connection(e.to_string()))?;
 
+        // Record pool metrics
+        self.record_pool_metrics();
+
         let expire_time = window_size * 2; // Keep keys for 2 windows
 
-        let result: Vec<i64> = self
+        // Execute Lua script with metrics
+        let mut cmd_recorder = Recorder::new(REDIS_COMMAND_DURATION);
+        cmd_recorder.push_attribute("operation", "check_and_consume");
+
+        let result: Vec<i64> = match self
             .rate_limit_script
             .key(&current_key)
             .key(&previous_key)
@@ -120,7 +155,19 @@ impl RateLimitStorage for RedisStorage {
             .arg(bucket_percentage)
             .invoke_async(&mut *conn)
             .await
-            .map_err(|e| StorageError::Query(format!("Rate limit script failed: {e}")))?;
+        {
+            Ok(result) => {
+                cmd_recorder.push_attribute("status", "success");
+                cmd_recorder.record();
+                result
+            }
+            Err(e) => {
+                cmd_recorder.push_attribute("status", "error");
+                cmd_recorder.push_attribute("error_type", "script_execution");
+                cmd_recorder.record();
+                return Err(StorageError::Query(format!("Rate limit script failed: {e}")));
+            }
+        };
 
         let allowed = result[0] == 1;
 
@@ -171,9 +218,17 @@ impl RateLimitStorage for RedisStorage {
             .await
             .map_err(|e| StorageError::Connection(e.to_string()))?;
 
+        // Record pool metrics
+        self.record_pool_metrics();
+
         let expire_time = window_size * 2; // Keep keys for 2 windows
 
-        let result: Vec<i64> = self
+        // Execute token Lua script with metrics
+        let mut cmd_recorder = Recorder::new(REDIS_COMMAND_DURATION);
+        cmd_recorder.push_attribute("operation", "check_and_consume_tokens");
+        cmd_recorder.push_attribute("tokens", tokens as i64);
+
+        let result: Vec<i64> = match self
             .rate_limit_tokens_script
             .key(&current_key)
             .key(&previous_key)
@@ -184,12 +239,25 @@ impl RateLimitStorage for RedisStorage {
             .arg(bucket_percentage)
             .invoke_async(&mut *conn)
             .await
-            .map_err(|e| StorageError::Query(format!("Token rate limit script failed: {e}")))?;
+        {
+            Ok(result) => {
+                cmd_recorder.push_attribute("status", "success");
+                cmd_recorder.record();
+                result
+            }
+            Err(e) => {
+                cmd_recorder.push_attribute("status", "error");
+                cmd_recorder.push_attribute("error_type", "script_execution");
+                cmd_recorder.record();
+                return Err(StorageError::Query(format!("Token rate limit script failed: {e}")));
+            }
+        };
 
         let allowed = result[0] == 1;
 
         if allowed {
             log::debug!("Successfully consumed {} tokens within rate limit", tokens);
+
             Ok(RateLimitResult {
                 allowed: true,
                 retry_after: None,
