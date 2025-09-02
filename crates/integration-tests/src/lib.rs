@@ -70,6 +70,7 @@ fn init_logger() {
 pub struct TestClient {
     base_url: String,
     client: reqwest::Client,
+    custom_headers: HeaderMap,
 }
 
 impl TestClient {
@@ -78,6 +79,7 @@ impl TestClient {
         Self {
             base_url,
             client: reqwest::Client::new(),
+            custom_headers: HeaderMap::new(),
         }
     }
 
@@ -88,12 +90,28 @@ impl TestClient {
             .build()
             .expect("Failed to create client with invalid cert acceptance");
 
-        Self { base_url, client }
+        Self {
+            base_url,
+            client,
+            custom_headers: HeaderMap::new(),
+        }
+    }
+
+    /// Add a custom header to be included in all requests
+    pub fn push_header(&mut self, key: &str, value: impl AsRef<str>) {
+        let header_name = reqwest::header::HeaderName::from_bytes(key.as_bytes()).unwrap();
+        let header_value = HeaderValue::from_str(value.as_ref()).unwrap();
+        self.custom_headers.insert(header_name, header_value);
     }
 
     /// Send a POST request to the given path with JSON body
     pub async fn post<T: serde::Serialize>(&self, path: &str, body: &T) -> reqwest::Result<reqwest::Response> {
         let mut req = self.client.post(format!("{}{}", self.base_url, path)).json(body);
+
+        // Add custom headers
+        for (key, value) in &self.custom_headers {
+            req = req.header(key.clone(), value.clone());
+        }
 
         // Add MCP headers if this is an MCP endpoint
         if path == "/mcp" {

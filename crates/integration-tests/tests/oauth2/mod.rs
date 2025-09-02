@@ -1,5 +1,6 @@
 mod audience_validation;
 mod authorization;
+mod client_id_cors;
 mod edge_cases;
 mod error_handling;
 mod forwarding;
