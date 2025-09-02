@@ -1350,10 +1350,10 @@ All histograms also function as counters (count field tracks number of observati
 
 **MCP Operation Metrics:**
 - `mcp.tool.call.duration` (histogram)
-  - Attributes: `tool_name`, `tool_type` (builtin/downstream), `status` (success/error), `client_id`, `group`
+  - Attributes: `tool_name`, `tool_type` (builtin/downstream), `status` (success/error), `client.id`, `client.group`
   - Additional for search: `keyword_count`, `result_count`
   - Additional for execute: `server_name` (for downstream tools)
-  - Additional for errors: `error_type`:
+  - Additional for errors: `error.type`:
     - `parse_error` - Invalid JSON (-32700)
     - `invalid_request` - Not a valid request (-32600)
     - `method_not_found` - Method/tool does not exist (-32601)
@@ -1364,15 +1364,15 @@ All histograms also function as counters (count field tracks number of observati
     - `unknown` - Any other error code
 
 - `mcp.tools.list.duration` (histogram)
-  - Attributes: `method` (list_tools), `status`, `client_id`, `group`
+  - Attributes: `method` (list_tools), `status`, `client.id`, `client.group`
 
 - `mcp.prompt.request.duration` (histogram)
-  - Attributes: `method` (list_prompts/get_prompt), `status`, `client_id`, `group`
-  - Additional for errors: `error_type` (same values as above)
+  - Attributes: `method` (list_prompts/get_prompt), `status`, `client.id`, `client.group`
+  - Additional for errors: `error.type` (same values as above)
 
 - `mcp.resource.request.duration` (histogram)
-  - Attributes: `method` (list_resources/read_resource), `status`, `client_id`, `group`
-  - Additional for errors: `error_type` (same values as above)
+  - Attributes: `method` (list_resources/read_resource), `status`, `client.id`, `client.group`
+  - Additional for errors: `error.type` (same values as above)
 
 **LLM Operation Metrics:**
 - `gen_ai.client.operation.duration` (histogram)
@@ -1412,6 +1412,24 @@ All histograms also function as counters (count field tracks number of observati
 - `gen_ai.client.total.token.usage` (counter)
   - Cumulative total token consumption (input + output)
   - Attributes: `gen_ai.system`, `gen_ai.request.model`, `client.id`, `client.group`
+
+**Redis Storage Metrics (when rate limiting with Redis is enabled):**
+- `redis.command.duration` (histogram)
+  - Tracks Redis command execution times
+  - Attributes:
+    - `operation` - The Redis operation type:
+      - `check_and_consume` - HTTP rate limit checking
+      - `check_and_consume_tokens` - Token-based rate limit checking
+    - `status` (success/error)
+    - `tokens` (for token operations) - Number of tokens checked
+
+- `redis.pool.connections.in_use` (gauge)
+  - Current number of connections in use from the pool
+  - No additional attributes
+
+- `redis.pool.connections.available` (gauge)
+  - Current number of available connections in the pool
+  - No additional attributes
 
 ## Adding to AI Assistants
 

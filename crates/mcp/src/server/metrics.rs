@@ -140,10 +140,10 @@ fn add_client_identity(recorder: &mut Recorder, context: &RequestContext<RoleSer
     if let Some(parts) = context.extensions.get::<Parts>()
         && let Some(identity) = parts.extensions.get::<config::ClientIdentity>()
     {
-        recorder.push_attribute("client_id", identity.client_id.clone());
+        recorder.push_attribute("client.id", identity.client_id.clone());
 
         if let Some(ref group) = identity.group {
-            recorder.push_attribute("group", group.clone());
+            recorder.push_attribute("client.group", group.clone());
         }
     }
 }
@@ -211,7 +211,7 @@ fn add_success_attributes(
 /// Add error-specific attributes
 fn add_error_attributes(recorder: &mut Recorder, tool_name: &str, actual_tool: Option<&str>, error: &ErrorData) {
     recorder.push_attribute("status", "error");
-    recorder.push_attribute("error_type", map_error_type(error.code));
+    recorder.push_attribute("error.type", map_error_type(error.code));
 
     match tool_name {
         "search" => {
@@ -318,7 +318,7 @@ fn map_result_attributes<T>(recorder: &mut Recorder, result: &Result<T, ErrorDat
         }
         Err(e) => {
             recorder.push_attribute("status", "error");
-            recorder.push_attribute("error_type", map_error_type(e.code));
+            recorder.push_attribute("error.type", map_error_type(e.code));
         }
     }
 }

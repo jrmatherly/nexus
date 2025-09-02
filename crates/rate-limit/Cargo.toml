@@ -10,7 +10,9 @@ deadpool.workspace = true
 governor.workspace = true
 log.workspace = true
 mini-moka.workspace = true
+opentelemetry.workspace = true
 redis.workspace = true
+telemetry.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
