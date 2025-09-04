@@ -59,7 +59,7 @@ jobs:
 
       - name: Trigger release workflow
         if: steps.version_check.outputs.should_release == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             await github.rest.actions.createWorkflowDispatch({
