@@ -180,7 +180,8 @@ services:
       - "9000:9000"   # Native protocol port
       - "8123:8123"   # HTTP port
     environment:
-      CLICKHOUSE_SKIP_USER_SETUP: 1
+      CLICKHOUSE_USER: grafbase
+      CLICKHOUSE_PASSWORD: grafbase
     volumes:
       - ./docker/clickhouse/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro
       - clickhouse-data:/var/lib/clickhouse

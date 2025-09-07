@@ -12,6 +12,8 @@ pub async fn create_clickhouse_client() -> clickhouse::Client {
     clickhouse::Client::default()
         .with_url("http://localhost:8123")
         .with_database("otel")
+        .with_user("grafbase")
+        .with_password("grafbase")
 }
 
 /// Generate a unique service name for test isolation

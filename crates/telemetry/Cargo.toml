@@ -10,6 +10,8 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 config.workspace = true
+fastrace = { workspace = true, features = ["enable"] }
+fastrace-opentelemetry.workspace = true
 log.workspace = true
 opentelemetry.workspace = true
 opentelemetry-otlp.workspace = true

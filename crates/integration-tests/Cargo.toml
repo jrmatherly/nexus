@@ -24,6 +24,7 @@ insta.workspace = true
 integration-test-macros.workspace = true
 log.workspace = true
 logforth = { workspace = true, features = ["colored"] }
+rand.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 rmcp = { workspace = true, features = [
     "client",

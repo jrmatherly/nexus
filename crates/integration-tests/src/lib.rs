@@ -55,8 +55,10 @@ fn init_logger() {
             logforth::builder()
                 .dispatch(|d| {
                     d.filter(
-                        EnvFilter::from_str("warn,server=debug,mcp=debug,config=debug,llm=debug,rate_limit=debug")
-                            .unwrap(),
+                        EnvFilter::from_str(
+                            "warn,server=debug,mcp=debug,config=debug,llm=debug,rate_limit=debug,telemetry=debug",
+                        )
+                        .unwrap(),
                     )
                     .append(logforth::append::Stderr::default())
                 })
@@ -536,6 +538,17 @@ impl TestServer {
 
         // Use the proper config loader which includes validation
         let config = Config::load(&config_path).unwrap();
+
+        // Debug log telemetry config
+        if let Some(telemetry) = &config.telemetry {
+            log::info!(
+                "Test telemetry config loaded - tracing: {}, otlp: {}",
+                telemetry.tracing().enabled,
+                telemetry.global_exporters().otlp.enabled
+            );
+        } else {
+            log::warn!("No telemetry config in test!");
+        }
 
         // Find an available port
         let mut listener = TcpListener::bind("127.0.0.1:0").await;

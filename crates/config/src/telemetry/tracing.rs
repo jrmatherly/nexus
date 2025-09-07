@@ -107,14 +107,8 @@ pub struct PropagationConfig {
     /// W3C Trace Context propagation
     pub trace_context: bool,
 
-    /// W3C Baggage propagation
-    pub baggage: bool,
-
     /// AWS X-Ray propagation
     pub aws_xray: bool,
-
-    /// Jaeger propagation
-    pub jaeger: bool,
 }
 
 #[cfg(test)]
@@ -139,9 +133,7 @@ mod tests {
             },
             propagation: PropagationConfig {
                 trace_context: false,
-                baggage: false,
                 aws_xray: false,
-                jaeger: false,
             },
             exporters: None,
         }
@@ -172,9 +164,7 @@ mod tests {
             },
             propagation: PropagationConfig {
                 trace_context: false,
-                baggage: false,
                 aws_xray: false,
-                jaeger: false,
             },
             exporters: None,
         }
@@ -198,9 +188,7 @@ mod tests {
 
             [propagation]
             trace_context = true
-            baggage = true
             aws_xray = true
-            jaeger = true
 
             [exporters.otlp]
             enabled = true
@@ -223,9 +211,7 @@ mod tests {
             },
             propagation: PropagationConfig {
                 trace_context: true,
-                baggage: true,
                 aws_xray: true,
-                jaeger: true,
             },
             exporters: Some(
                 ExportersConfig {
@@ -311,9 +297,7 @@ sampling rate must be between 0.0 and 1.0, got -0.1
         assert_debug_snapshot!(config.propagation, @r###"
         PropagationConfig {
             trace_context: true,
-            baggage: false,
             aws_xray: true,
-            jaeger: false,
         }
         "###);
     }
