@@ -3,9 +3,13 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 pub mod exporters;
+pub mod logs;
+pub mod metrics;
 pub mod tracing;
 
 pub use self::exporters::ExportersConfig;
+pub use self::logs::LogsConfig;
+pub use self::metrics::MetricsConfig;
 pub use self::tracing::TracingConfig;
 
 /// Telemetry configuration for observability
@@ -60,13 +64,13 @@ impl TelemetryConfig {
     /// Get the exporters configuration for metrics
     /// Returns specific metrics exporters if configured, otherwise falls back to global
     pub fn metrics_exporters(&self) -> &ExportersConfig {
-        self.metrics.exporters.as_ref().unwrap_or(&self.exporters)
+        self.metrics.exporters().unwrap_or(&self.exporters)
     }
 
     /// Get the exporters configuration for logs
     /// Returns specific logs exporters if configured, otherwise falls back to global
     pub fn logs_exporters(&self) -> &ExportersConfig {
-        self.logs.exporters.as_ref().unwrap_or(&self.exporters)
+        self.logs.exporters().unwrap_or(&self.exporters)
     }
 
     /// Get the exporters configuration for traces
@@ -79,7 +83,7 @@ impl TelemetryConfig {
     /// Returns metrics-specific config if set and enabled, otherwise falls back to global config
     pub fn metrics_otlp_config(&self) -> Option<&exporters::OtlpExporterConfig> {
         // Check metrics-specific config first
-        if let Some(metrics_exporters) = &self.metrics.exporters
+        if let Some(metrics_exporters) = self.metrics.exporters()
             && metrics_exporters.otlp.enabled
         {
             return Some(&metrics_exporters.otlp);
@@ -92,36 +96,22 @@ impl TelemetryConfig {
             None
         }
     }
-}
 
-/// Metrics-specific configuration
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
-pub struct MetricsConfig {
-    /// Override global exporters for metrics (optional)
-    #[serde(default)]
-    exporters: Option<ExportersConfig>,
-}
+    /// Get the effective OTLP configuration for traces
+    /// Returns traces-specific config if set and enabled, otherwise falls back to global config
+    pub fn traces_otlp_config(&self) -> Option<&exporters::OtlpExporterConfig> {
+        // Check traces-specific config first
+        if let Some(traces_exporters) = self.tracing.exporters()
+            && traces_exporters.otlp.enabled
+        {
+            return Some(&traces_exporters.otlp);
+        }
 
-impl MetricsConfig {
-    /// Get the exporters if configured
-    pub fn exporters(&self) -> Option<&ExportersConfig> {
-        self.exporters.as_ref()
-    }
-}
-
-/// Logs-specific configuration
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
-pub struct LogsConfig {
-    /// Override global exporters for logs (optional)
-    #[serde(default)]
-    exporters: Option<ExportersConfig>,
-}
-
-impl LogsConfig {
-    /// Get the exporters if configured
-    pub fn exporters(&self) -> Option<&ExportersConfig> {
-        self.exporters.as_ref()
+        // Fall back to global config
+        if self.exporters.otlp.enabled {
+            Some(&self.exporters.otlp)
+        } else {
+            None
+        }
     }
 }

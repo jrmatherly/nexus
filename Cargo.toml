@@ -32,6 +32,7 @@ duration-str = "0.17"
 eventsource-stream = "0.2.3"
 fast-glob = "1.0.0"
 fastrace = "0.7.14"
+fastrace-opentelemetry = "0.13.0"
 futures = "0.3.31"
 futures-util = "0.3.31"
 governor = { version = "0.10", features = ["std", "jitter"] }
@@ -50,8 +51,8 @@ logforth = "0.27.0"
 mcp = { version = "0.1.0", path = "crates/mcp" }
 mini-moka = "0.10"
 opentelemetry = "0.30"
-opentelemetry-otlp = { version = "0.30", features = ["metrics", "grpc-tonic"] }
-opentelemetry_sdk = { version = "0.30", features = ["metrics", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.30", features = ["metrics", "trace", "grpc-tonic"] }
+opentelemetry_sdk = { version = "0.30", features = ["metrics", "trace", "rt-tokio"] }
 proc-macro2 = "1.0"
 quote = "1.0"
 rate-limit = { version = "0.1.0", path = "crates/rate-limit" }
