@@ -90,13 +90,15 @@ impl<'a> LlmServerBuilder<'a> {
             }),
         };
 
-        // Wrap with metrics if telemetry is enabled
-        if self.config.telemetry.is_some() {
+        // Create handler with or without metrics
+        let handler = if self.config.telemetry.is_some() {
             log::debug!("Telemetry enabled, wrapping LLM server with metrics middleware");
-            Ok(LlmHandler::WithMetrics(LlmServerWithMetrics::new(server)))
+            LlmHandler::WithMetrics(LlmServerWithMetrics::new(server))
         } else {
             log::debug!("Telemetry disabled, using direct LLM server");
-            Ok(LlmHandler::WithoutMetrics(server))
-        }
+            LlmHandler::WithoutMetrics(server)
+        };
+
+        Ok(handler)
     }
 }

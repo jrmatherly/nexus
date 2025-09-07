@@ -7,7 +7,7 @@ use crate::{
     messages::{ChatCompletionRequest, ChatCompletionResponse, ModelsResponse},
     provider::ChatCompletionStream,
     request::RequestContext,
-    server::{LlmServer, metrics::stream::TokenMetricsConfig},
+    server::LlmService,
 };
 use opentelemetry::metrics::Counter;
 use stream::MetricsStream;
@@ -18,16 +18,16 @@ use telemetry::metrics::{
 
 /// Wrapper that adds metrics recording to the LLM server
 #[derive(Clone)]
-pub struct LlmServerWithMetrics {
-    inner: LlmServer,
+pub struct LlmServerWithMetrics<S> {
+    inner: S,
     input_token_counter: Counter<u64>,
     output_token_counter: Counter<u64>,
     total_token_counter: Counter<u64>,
 }
 
-impl LlmServerWithMetrics {
+impl<S> LlmServerWithMetrics<S> {
     /// Create a new metrics middleware wrapping the given server
-    pub fn new(inner: LlmServer) -> Self {
+    pub fn new(inner: S) -> Self {
         let meter = telemetry::metrics::meter();
 
         Self {
@@ -37,15 +37,20 @@ impl LlmServerWithMetrics {
             total_token_counter: meter.u64_counter(GEN_AI_CLIENT_TOTAL_TOKEN_USAGE).build(),
         }
     }
+}
 
+impl<S> LlmService for LlmServerWithMetrics<S>
+where
+    S: LlmService + Clone + Send + Sync,
+{
     /// List all available models from all providers.
-    pub fn models(&self) -> ModelsResponse {
+    fn models(&self) -> ModelsResponse {
         // No metrics for model listing
         self.inner.models()
     }
 
     /// Process a chat completion request with metrics.
-    pub async fn completions(
+    async fn completions(
         &self,
         request: ChatCompletionRequest,
         context: &RequestContext,
@@ -90,7 +95,7 @@ impl LlmServerWithMetrics {
     }
 
     /// Process a streaming chat completion request with metrics.
-    pub async fn completions_stream(
+    async fn completions_stream(
         &self,
         request: ChatCompletionRequest,
         context: &RequestContext,
@@ -100,7 +105,7 @@ impl LlmServerWithMetrics {
 
         let stream = self.inner.completions_stream(request.clone(), context).await?;
 
-        let token_config = TokenMetricsConfig {
+        let token_config = stream::TokenMetricsConfig {
             input_token_counter: self.input_token_counter.clone(),
             output_token_counter: self.output_token_counter.clone(),
             total_token_counter: self.total_token_counter.clone(),

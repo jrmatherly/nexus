@@ -36,11 +36,10 @@ impl McpServerBuilder {
 
         let mcp_server = McpServer::new(self).await?;
 
+        // Create handler with or without metrics
         let handler = if metrics_enabled {
-            // Metrics enabled - apply middleware
             McpHandler::WithMetrics(MetricsMiddleware::new(mcp_server))
         } else {
-            // Metrics disabled - use server directly
             McpHandler::WithoutMetrics(mcp_server)
         };
 

@@ -4,14 +4,14 @@ use crate::{
     messages::{ChatCompletionRequest, ChatCompletionResponse, ModelsResponse},
     provider::ChatCompletionStream,
     request::RequestContext,
-    server::{LlmServer, metrics::LlmServerWithMetrics},
+    server::{LlmServer, LlmService, metrics::LlmServerWithMetrics},
 };
 
 /// LLM handler that optionally applies metrics based on configuration
 #[derive(Clone)]
 pub(crate) enum LlmHandler {
     /// Server with metrics recording enabled
-    WithMetrics(LlmServerWithMetrics),
+    WithMetrics(LlmServerWithMetrics<LlmServer>),
     /// Server without metrics (direct calls)
     WithoutMetrics(LlmServer),
 }
