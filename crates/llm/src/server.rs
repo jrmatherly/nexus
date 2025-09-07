@@ -1,9 +1,11 @@
 mod builder;
 mod handler;
 mod metrics;
+mod service;
 
 pub(crate) use builder::LlmServerBuilder;
 pub(crate) use handler::LlmHandler;
+pub(crate) use service::LlmService;
 
 use std::sync::Arc;
 
@@ -247,5 +249,27 @@ impl LlmServer {
         });
 
         Ok(Box::pin(transformed_stream))
+    }
+}
+
+impl LlmService for LlmServer {
+    fn models(&self) -> ModelsResponse {
+        self.models()
+    }
+
+    async fn completions(
+        &self,
+        request: ChatCompletionRequest,
+        context: &RequestContext,
+    ) -> crate::Result<ChatCompletionResponse> {
+        self.completions(request, context).await
+    }
+
+    async fn completions_stream(
+        &self,
+        request: ChatCompletionRequest,
+        context: &RequestContext,
+    ) -> crate::Result<ChatCompletionStream> {
+        self.completions_stream(request, context).await
     }
 }
