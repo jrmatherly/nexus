@@ -1,5 +1,7 @@
 //! Distributed tracing integration tests
 
+mod mcp;
+
 use clickhouse::Row;
 use indoc::formatdoc;
 use integration_tests::{TestServer, TestService, telemetry::*, tools::AdderTool};
@@ -133,9 +135,32 @@ async fn basic_trace_creation() {
         "[].TraceId" => "[TRACE_ID]",
         "[].SpanId" => "[SPAN_ID]",  
         "[].ParentSpanId" => "[PARENT_SPAN_ID]",
-        "[].ServiceName" => "[SERVICE_NAME]"
+        "[].ServiceName" => "[SERVICE_NAME]",
+        "[0].SpanAttributes[1][1]" => "[CLIENT_ID]"  // Redact the client_id in MCP span
     }, @r#"
     [
+      {
+        "TraceId": "[TRACE_ID]",
+        "SpanId": "[SPAN_ID]",
+        "ParentSpanId": "[PARENT_SPAN_ID]",
+        "SpanName": "tools/list",
+        "ServiceName": "[SERVICE_NAME]",
+        "SpanAttributes": [
+          [
+            "mcp.auth_forwarded",
+            "false"
+          ],
+          [
+            "mcp.client_id",
+            "[CLIENT_ID]"
+          ],
+          [
+            "mcp.method",
+            "tools/list"
+          ]
+        ],
+        "StatusCode": "Unset"
+      },
       {
         "TraceId": "[TRACE_ID]",
         "SpanId": "[SPAN_ID]",
@@ -297,6 +322,28 @@ async fn trace_propagation_with_traceparent() {
         "[].ServiceName" => "[SERVICE_NAME]"
     }, @r#"
     [
+      {
+        "TraceId": "[TRACE_ID]",
+        "SpanId": "[SPAN_ID]",
+        "ParentSpanId": "[PARENT_SPAN_ID]",
+        "SpanName": "tools/list",
+        "ServiceName": "[SERVICE_NAME]",
+        "SpanAttributes": [
+          [
+            "mcp.auth_forwarded",
+            "false"
+          ],
+          [
+            "mcp.client_id",
+            "test-client"
+          ],
+          [
+            "mcp.method",
+            "tools/list"
+          ]
+        ],
+        "StatusCode": "Unset"
+      },
       {
         "TraceId": "[TRACE_ID]",
         "SpanId": "[SPAN_ID]",
@@ -561,6 +608,28 @@ async fn aws_xray_trace_propagation() {
         "[].ServiceName" => "[SERVICE_NAME]"
     }, @r#"
     [
+      {
+        "TraceId": "[TRACE_ID]",
+        "SpanId": "[SPAN_ID]",
+        "ParentSpanId": "[PARENT_SPAN_ID]",
+        "SpanName": "tools/list",
+        "ServiceName": "[SERVICE_NAME]",
+        "SpanAttributes": [
+          [
+            "mcp.auth_forwarded",
+            "false"
+          ],
+          [
+            "mcp.client_id",
+            "test-client"
+          ],
+          [
+            "mcp.method",
+            "tools/list"
+          ]
+        ],
+        "StatusCode": "Unset"
+      },
       {
         "TraceId": "[TRACE_ID]",
         "SpanId": "[SPAN_ID]",

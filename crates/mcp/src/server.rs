@@ -3,6 +3,7 @@ pub mod execute;
 pub mod handler;
 pub mod metrics;
 pub mod search;
+pub mod tracing;
 
 use self::builder::McpServerBuilder;
 use crate::cache::DynamicDownstreamCache;

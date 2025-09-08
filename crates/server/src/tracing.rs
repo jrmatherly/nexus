@@ -66,7 +66,7 @@ where
         self.next.poll_ready(cx)
     }
 
-    fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
+    fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
         let path = req
             .extensions()
             .get::<MatchedPath>()
@@ -100,6 +100,12 @@ where
 
         // Create the root span with properties
         let root = Span::root(span_name.clone(), parent);
+
+        // Store the trace context in request extensions so downstream services can access it
+        // This is needed because some service layers (like StreamableHttpService) spawn new tasks
+        // which lose the thread-local span context
+        // Unfortunately, MCP spans will be siblings rather than children due to this limitation
+        req.extensions_mut().insert(parent);
 
         // Add span attributes following OpenTelemetry semantic conventions
         root.add_property(|| ("http.request.method", method.clone()));
