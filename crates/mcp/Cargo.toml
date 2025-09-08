@@ -12,6 +12,7 @@ anyhow = { workspace = true, features = ["backtrace"] }
 axum.workspace = true
 config.workspace = true
 convert_case.workspace = true
+fastrace = { workspace = true, features = ["enable"] }
 futures-util.workspace = true
 http.workspace = true
 indoc.workspace = true

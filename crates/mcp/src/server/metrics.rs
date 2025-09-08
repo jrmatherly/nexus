@@ -16,20 +16,20 @@ use telemetry::metrics::{
 
 /// Wrapper that adds metrics recording to an MCP server
 #[derive(Clone)]
-pub struct MetricsMiddleware<H> {
-    inner: H,
+pub struct MetricsMiddleware<S> {
+    inner: S,
 }
 
-impl<H> MetricsMiddleware<H> {
+impl<S> MetricsMiddleware<S> {
     /// Create a new metrics middleware wrapping the given handler
-    pub fn new(inner: H) -> Self {
+    pub fn new(inner: S) -> Self {
         Self { inner }
     }
 }
 
-impl<H> ServerHandler for MetricsMiddleware<H>
+impl<S> ServerHandler for MetricsMiddleware<S>
 where
-    H: ServerHandler,
+    S: ServerHandler,
 {
     fn get_info(&self) -> rmcp::model::ServerInfo {
         self.inner.get_info()

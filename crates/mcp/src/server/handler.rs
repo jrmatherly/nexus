@@ -1,6 +1,6 @@
-//! MCP handler that conditionally applies metrics middleware.
+//! MCP handler wrapper for the middleware pipeline.
 
-use super::{McpServer, metrics::MetricsMiddleware};
+use super::{McpServer, metrics::MetricsMiddleware, tracing::TracingMiddleware};
 use rmcp::{
     RoleServer, ServerHandler,
     model::{
@@ -10,18 +10,26 @@ use rmcp::{
     service::RequestContext,
 };
 
-/// Wrapper enum to handle conditional metrics middleware
+/// Wrapper enum to handle different middleware combinations
 #[derive(Clone)]
 pub(crate) enum McpHandler {
-    WithMetrics(MetricsMiddleware<McpServer>),
-    WithoutMetrics(McpServer),
+    /// Both tracing and metrics enabled
+    WithFullTelemetry(TracingMiddleware<MetricsMiddleware<McpServer>>),
+    /// Only metrics enabled
+    WithMetricsOnly(MetricsMiddleware<McpServer>),
+    /// Only tracing enabled
+    WithTracingOnly(TracingMiddleware<McpServer>),
+    /// No telemetry
+    WithoutTelemetry(McpServer),
 }
 
 impl ServerHandler for McpHandler {
     fn get_info(&self) -> rmcp::model::ServerInfo {
         match self {
-            McpHandler::WithMetrics(handler) => handler.get_info(),
-            McpHandler::WithoutMetrics(handler) => handler.get_info(),
+            McpHandler::WithFullTelemetry(handler) => handler.get_info(),
+            McpHandler::WithMetricsOnly(handler) => handler.get_info(),
+            McpHandler::WithTracingOnly(handler) => handler.get_info(),
+            McpHandler::WithoutTelemetry(handler) => handler.get_info(),
         }
     }
 
@@ -31,8 +39,10 @@ impl ServerHandler for McpHandler {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         match self {
-            McpHandler::WithMetrics(handler) => handler.call_tool(params, context).await,
-            McpHandler::WithoutMetrics(handler) => handler.call_tool(params, context).await,
+            McpHandler::WithFullTelemetry(handler) => handler.call_tool(params, context).await,
+            McpHandler::WithMetricsOnly(handler) => handler.call_tool(params, context).await,
+            McpHandler::WithTracingOnly(handler) => handler.call_tool(params, context).await,
+            McpHandler::WithoutTelemetry(handler) => handler.call_tool(params, context).await,
         }
     }
 
@@ -42,8 +52,10 @@ impl ServerHandler for McpHandler {
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         match self {
-            McpHandler::WithMetrics(handler) => handler.list_tools(params, context).await,
-            McpHandler::WithoutMetrics(handler) => handler.list_tools(params, context).await,
+            McpHandler::WithFullTelemetry(handler) => handler.list_tools(params, context).await,
+            McpHandler::WithMetricsOnly(handler) => handler.list_tools(params, context).await,
+            McpHandler::WithTracingOnly(handler) => handler.list_tools(params, context).await,
+            McpHandler::WithoutTelemetry(handler) => handler.list_tools(params, context).await,
         }
     }
 
@@ -53,8 +65,10 @@ impl ServerHandler for McpHandler {
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, ErrorData> {
         match self {
-            McpHandler::WithMetrics(handler) => handler.list_prompts(params, context).await,
-            McpHandler::WithoutMetrics(handler) => handler.list_prompts(params, context).await,
+            McpHandler::WithFullTelemetry(handler) => handler.list_prompts(params, context).await,
+            McpHandler::WithMetricsOnly(handler) => handler.list_prompts(params, context).await,
+            McpHandler::WithTracingOnly(handler) => handler.list_prompts(params, context).await,
+            McpHandler::WithoutTelemetry(handler) => handler.list_prompts(params, context).await,
         }
     }
 
@@ -64,8 +78,10 @@ impl ServerHandler for McpHandler {
         context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResult, ErrorData> {
         match self {
-            McpHandler::WithMetrics(handler) => handler.get_prompt(params, context).await,
-            McpHandler::WithoutMetrics(handler) => handler.get_prompt(params, context).await,
+            McpHandler::WithFullTelemetry(handler) => handler.get_prompt(params, context).await,
+            McpHandler::WithMetricsOnly(handler) => handler.get_prompt(params, context).await,
+            McpHandler::WithTracingOnly(handler) => handler.get_prompt(params, context).await,
+            McpHandler::WithoutTelemetry(handler) => handler.get_prompt(params, context).await,
         }
     }
 
@@ -75,8 +91,10 @@ impl ServerHandler for McpHandler {
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
         match self {
-            McpHandler::WithMetrics(handler) => handler.list_resources(params, context).await,
-            McpHandler::WithoutMetrics(handler) => handler.list_resources(params, context).await,
+            McpHandler::WithFullTelemetry(handler) => handler.list_resources(params, context).await,
+            McpHandler::WithMetricsOnly(handler) => handler.list_resources(params, context).await,
+            McpHandler::WithTracingOnly(handler) => handler.list_resources(params, context).await,
+            McpHandler::WithoutTelemetry(handler) => handler.list_resources(params, context).await,
         }
     }
 
@@ -86,8 +104,10 @@ impl ServerHandler for McpHandler {
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, ErrorData> {
         match self {
-            McpHandler::WithMetrics(handler) => handler.read_resource(params, context).await,
-            McpHandler::WithoutMetrics(handler) => handler.read_resource(params, context).await,
+            McpHandler::WithFullTelemetry(handler) => handler.read_resource(params, context).await,
+            McpHandler::WithMetricsOnly(handler) => handler.read_resource(params, context).await,
+            McpHandler::WithTracingOnly(handler) => handler.read_resource(params, context).await,
+            McpHandler::WithoutTelemetry(handler) => handler.read_resource(params, context).await,
         }
     }
 }
