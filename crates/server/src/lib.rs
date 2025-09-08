@@ -11,6 +11,7 @@ mod csrf;
 mod health;
 mod metrics;
 mod rate_limit;
+mod tracing;
 mod well_known;
 
 use std::net::SocketAddr;
@@ -41,7 +42,11 @@ pub struct ServeConfig {
 /// Initialize telemetry if configured
 async fn init_telemetry(config: &Config) -> anyhow::Result<Option<telemetry::TelemetryGuard>> {
     if let Some(telemetry_config) = &config.telemetry {
-        log::info!("Initializing telemetry subsystem");
+        log::info!(
+            "Initializing telemetry subsystem - tracing enabled: {}, global OTLP enabled: {}",
+            telemetry_config.tracing().enabled,
+            telemetry_config.global_exporters().otlp.enabled
+        );
         Ok(Some(telemetry::init(telemetry_config).await?))
     } else {
         log::debug!("Telemetry not configured, skipping initialization");
@@ -159,7 +164,22 @@ pub async fn serve(
         protected_router = protected_router.layer(RateLimitLayer::new(manager));
     }
 
-    // Merge protected routes (with rate limiting) into main app
+    // Apply tracing middleware to protected routes if telemetry and tracing are enabled
+    // This must be done BEFORE merging into the main app
+    if let Some(ref telemetry) = config.telemetry
+        && telemetry.tracing().enabled
+    {
+        log::debug!("Applying tracing middleware to protected routes");
+        protected_router = protected_router.layer(tracing::TracingLayer::new());
+    }
+
+    // Apply metrics middleware to protected routes if telemetry is enabled
+    if config.telemetry.is_some() {
+        log::debug!("Applying metrics middleware to protected routes");
+        protected_router = protected_router.layer(metrics::MetricsLayer::new());
+    }
+
+    // Merge protected routes (with all middleware) into main app
     app = app.merge(protected_router);
 
     // Add health endpoint (unprotected - added AFTER rate limiting)
@@ -182,11 +202,6 @@ pub async fn serve(
     // Apply CSRF protection to the entire app if enabled
     if config.server.csrf.enabled {
         app = csrf::inject_layer(app, &config.server.csrf);
-    }
-
-    // Apply metrics middleware if telemetry is enabled
-    if config.telemetry.is_some() {
-        app = app.layer(metrics::MetricsLayer::new());
     }
 
     let listener = TcpListener::bind(listen_address)

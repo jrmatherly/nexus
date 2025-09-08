@@ -2301,6 +2301,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastrace-opentelemetry"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65cf2a7ad300d531f04495e15720852fbf0f01f28e884ac29e22ddbb7228074e"
+dependencies = [
+ "fastrace",
+ "log",
+ "opentelemetry",
+ "opentelemetry_sdk",
+ "pollster",
+]
+
+[[package]]
 name = "fastrand"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3497,6 +3510,7 @@ dependencies = [
  "integration-test-macros",
  "log",
  "logforth",
+ "rand 0.8.5",
  "reqwest",
  "rmcp",
  "rustls 0.23.31",
@@ -4671,6 +4685,12 @@ dependencies = [
  "rustix 1.0.8",
  "windows-sys 0.60.2",
 ]
+
+[[package]]
+name = "pollster"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
 
 [[package]]
 name = "polyval"
@@ -5966,6 +5986,7 @@ dependencies = [
  "axum-server",
  "config",
  "fast-glob",
+ "fastrace",
  "http 1.3.1",
  "http-body 1.0.1",
  "jwt-compact",
@@ -6701,6 +6722,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "config",
+ "fastrace",
+ "fastrace-opentelemetry",
  "log",
  "opentelemetry",
  "opentelemetry-otlp",
