@@ -22,3 +22,6 @@ target
 
 .env
 .mcp.json
+
+.serena/
+.vscode/

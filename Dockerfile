@@ -1,11 +1,11 @@
 FROM rust:1.89-bookworm AS chef
 
+WORKDIR /nexus
 COPY rust-toolchain.toml rust-toolchain.toml
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash && \
     cargo binstall --no-confirm cargo-chef cargo-zigbuild sccache
 ENV RUSTC_WRAPPER=sccache SCCACHE_DIR=/sccache
-
-WORKDIR /nexus
 
 FROM chef AS planner
 # At this stage we don't really bother selecting anything specific, it's fast enough.
@@ -45,7 +45,7 @@ LABEL org.opencontainers.image.url='https://nexusrouter.com' \
 WORKDIR /nexus
 
 # used curl to run a health check query against the server in a docker-compose file
-RUN apt update && apt upgrade -y && apt install -y curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 
 RUN adduser -u 1000 --home /data nexus && mkdir -p /data && chown nexus /data
 COPY --from=builder /nexus/crates/config/examples/nexus.toml /etc/nexus.toml
