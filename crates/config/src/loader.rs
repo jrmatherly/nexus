@@ -9,12 +9,97 @@ use toml::Value;
 
 use crate::{ClientIdentificationConfig, Config, LlmProviderConfig};
 
+/// Check if a configuration path represents an optional environment variable field
+fn is_optional_env_field(path: &str) -> bool {
+    // Known optional environment variable fields
+    const OPTIONAL_FIELDS: &[&str] = &[
+        "llm.providers.openai.base_url",
+        "llm.providers.anthropic.base_url", 
+        "llm.providers.google.base_url",
+        "llm.providers.bedrock.base_url",
+        "server.client_identification.jwt_public_key_url",
+        "telemetry.service_name",
+    ];
+    
+    OPTIONAL_FIELDS.iter().any(|&field| path.ends_with(field))
+}
+
+/// Check if the error is specifically about a missing environment variable
+fn is_missing_env_var_error<E: std::fmt::Display>(err: &E) -> bool {
+    let err_str = err.to_string().to_lowercase();
+    err_str.contains("environment variable not found") || 
+    err_str.contains("env var") ||
+    (err_str.contains("variable") && err_str.contains("not found"))
+}
+
+/// Extract the path from an error message like "Failed to expand dynamic string at path 'path': error"
+fn extract_path_from_error(error_message: &str) -> Option<String> {
+    if let Some(start) = error_message.find("path '") {
+        let start_pos = start + 6; // Skip "path '"
+        if let Some(end) = error_message[start_pos..].find("':") {
+            let path = &error_message[start_pos..start_pos + end];
+            return Some(path.to_string());
+        }
+    }
+    None
+}
+
+/// Remove a field from the TOML configuration by path
+fn remove_field_from_config(config: &mut Value, path: &str) {
+    let parts: Vec<&str> = path.split('.').collect();
+    
+    if parts.is_empty() {
+        return;
+    }
+    
+    let mut current = config;
+    
+    // Navigate to the parent of the field we want to remove
+    for &part in &parts[..parts.len() - 1] {
+        if let Some(table) = current.as_table_mut() {
+            if let Some(value) = table.get_mut(part) {
+                current = value;
+            } else {
+                return; // Path doesn't exist
+            }
+        } else {
+            return; // Not a table, can't navigate further
+        }
+    }
+    
+    // Remove the final field
+    if let Some(table) = current.as_table_mut() {
+        let final_key = parts[parts.len() - 1];
+        table.remove(final_key);
+        log::debug!("Removed optional field '{path}' due to missing environment variable");
+    }
+}
+
 pub fn load<P: AsRef<Path>>(path: P) -> anyhow::Result<Config> {
     let path = path.as_ref().to_path_buf();
     let content = std::fs::read_to_string(&path)?;
     let mut raw_config: Value = toml::from_str(&content)?;
 
-    expand_dynamic_strings(&mut Vec::new(), &mut raw_config)?;
+    // Try expanding dynamic strings, but handle optional fields gracefully
+    if let Err(err) = expand_dynamic_strings(&mut Vec::new(), &mut raw_config) {
+        // Check if this error is from an optional field with missing env var
+        let err_str = err.to_string();
+        if err_str.contains("Failed to expand dynamic string at path") {
+            if let Some(path_part) = extract_path_from_error(&err_str) {
+                if is_optional_env_field(&path_part) && is_missing_env_var_error(&err) {
+                    // Remove the optional field and try again
+                    remove_field_from_config(&mut raw_config, &path_part);
+                    expand_dynamic_strings(&mut Vec::new(), &mut raw_config)?;
+                } else {
+                    return Err(err);
+                }
+            } else {
+                return Err(err);
+            }
+        } else {
+            return Err(err);
+        }
+    }
 
     let config = Config::deserialize(raw_config)?;
     validate_has_downstreams(&config)?;
@@ -63,8 +148,8 @@ fn expand_dynamic_strings<'a>(path: &mut Vec<Result<&'a str, usize>>, value: &'a
         Value::String(s) => match DynamicString::<String>::from_str(s) {
             Ok(out) => *s = out.into_inner(),
             Err(err) => {
+                // Build the path string for error reporting and optional field detection
                 let mut p = String::new();
-
                 for segment in path {
                     match segment {
                         Ok(s) => {
@@ -74,7 +159,6 @@ fn expand_dynamic_strings<'a>(path: &mut Vec<Result<&'a str, usize>>, value: &'a
                         Err(i) => write!(p, "[{i}]").unwrap(),
                     }
                 }
-
                 if p.ends_with('.') {
                     p.pop();
                 }
@@ -754,5 +838,67 @@ mod tests {
         let error = result.unwrap_err().to_string();
 
         assert_snapshot!(error, @"Group 'enterprise' in provider 'openai' rate limits not found in group_values");
+    }
+
+    #[test]
+    fn missing_optional_environment_variable_should_be_handled() {
+        // Test that when an optional environment variable like OPENAI_BASE_URL is missing,
+        // the configuration loads successfully and the optional field is omitted
+        let config_str = indoc! {r#"
+            [llm.providers.openai]
+            type = "openai"
+            api_key = "sk-1234567890abcdef"
+            base_url = "{{ env.OPENAI_BASE_URL_MISSING }}"
+
+            [llm.providers.openai.models.gpt-4]
+        "#};
+
+        // This should succeed - the missing environment variable for optional field should be handled gracefully
+        let raw_config: toml::Value = toml::from_str(config_str).unwrap();
+        
+        // This should not fail even though OPENAI_BASE_URL_MISSING is not set
+        let result = load_from_value(raw_config);
+        assert!(result.is_ok(), "Configuration loading should succeed when optional env var is missing: {:?}", result);
+        
+        let config = result.unwrap();
+        
+        // Verify the configuration loaded correctly
+        assert!(config.llm.enabled());
+        assert!(config.llm.has_providers());
+        
+        let openai_provider = config.llm.providers.get("openai").unwrap();
+        
+        // The base_url should be None since the environment variable was missing
+        assert!(openai_provider.base_url().is_none(), "base_url should be None when env var is missing");
+    }
+
+    /// Helper function for testing - loads config from a TOML value instead of file
+    fn load_from_value(mut raw_config: toml::Value) -> anyhow::Result<Config> {
+        use serde::Deserialize;
+        // Try expanding dynamic strings, but handle optional fields gracefully
+        if let Err(err) = super::expand_dynamic_strings(&mut Vec::new(), &mut raw_config) {
+            // Check if this error is from an optional field with missing env var
+            let err_str = err.to_string();
+            if err_str.contains("Failed to expand dynamic string at path") {
+                if let Some(path_part) = super::extract_path_from_error(&err_str) {
+                    if super::is_optional_env_field(&path_part) && super::is_missing_env_var_error(&err) {
+                        // Remove the optional field and try again
+                        super::remove_field_from_config(&mut raw_config, &path_part);
+                        super::expand_dynamic_strings(&mut Vec::new(), &mut raw_config)?;
+                    } else {
+                        return Err(err);
+                    }
+                } else {
+                    return Err(err);
+                }
+            } else {
+                return Err(err);
+            }
+        }
+
+        let config = Config::deserialize(raw_config)?;
+        super::validate_has_downstreams(&config)?;
+
+        Ok(config)
     }
 }
