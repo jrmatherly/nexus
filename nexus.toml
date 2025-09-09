@@ -42,8 +42,8 @@ interval = "60s"
 
 # Client identification for token-based rate limiting
 [server.client_identification]
-enabled = false  # Enable if using OAuth2 with group-based rate limiting
-# client_id.jwt_claim = "sub"
+enabled = true  # Enable for LLM rate limiting
+client_id.http_header = "X-Client-ID"  # Simple header-based identification
 # group_id.jwt_claim = "groups"
 # [server.client_identification.validation]
 # group_values = ["free", "pro", "enterprise"]
