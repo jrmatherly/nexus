@@ -1,0 +1,150 @@
+# Production-ready Nexus configuration for Docker deployment
+# This configuration provides a comprehensive setup for containerized environments
+
+[server]
+# Bind to all interfaces for container networking
+listen_address = "0.0.0.0:3000"
+
+# Health endpoint configuration
+[server.health]
+enabled = true
+path = "/health"
+
+# OAuth2 authentication (uncomment to enable)
+# [server.oauth]
+# url = "{{ env.OAUTH2_JWKS_URL }}"
+# poll_interval = "5m"
+# expected_issuer = "{{ env.OAUTH2_EXPECTED_ISSUER }}"
+# expected_audience = "{{ env.OAUTH2_EXPECTED_AUDIENCE }}"
+# 
+# [server.oauth.protected_resource]
+# resource = "https://your-nexus-instance.com"
+# authorization_servers = ["{{ env.OAUTH2_EXPECTED_ISSUER }}"]
+
+# Rate limiting configuration
+[server.rate_limits]
+enabled = true
+
+# Use Redis for distributed rate limiting in production
+[server.rate_limits.storage]
+type = "redis"
+url = "{{ env.REDIS_URL }}"
+key_prefix = "nexus:rate_limit:"
+
+# Global rate limits
+[server.rate_limits.global]
+limit = 1000
+interval = "60s"
+
+[server.rate_limits.per_ip]
+limit = 100
+interval = "60s"
+
+# Client identification for token-based rate limiting
+[server.client_identification]
+enabled = false  # Enable if using OAuth2 with group-based rate limiting
+# client_id.jwt_claim = "sub"
+# group_id.jwt_claim = "groups"
+# [server.client_identification.validation]
+# group_values = ["free", "pro", "enterprise"]
+
+# =============================================================================
+# LLM PROVIDER CONFIGURATION
+# =============================================================================
+
+[llm]
+enabled = true
+path = "/llm"
+
+# OpenAI Provider
+[llm.providers.openai]
+type = "openai"
+api_key = "{{ env.OPENAI_API_KEY }}"
+base_url = "{{ env.OPENAI_BASE_URL }}"  # Optional: Custom endpoint (default: https://api.openai.com/v1)
+# Optional: Enable token forwarding for user-provided keys
+# forward_token = true
+
+# Configure available models
+[llm.providers.openai.models.gpt-5-nano]
+[llm.providers.openai.models.gpt-5-mini]
+[llm.providers.openai.models.gpt-4.1-nano]
+
+# Provider-level rate limiting (tokens per user per minute)
+[llm.providers.openai.rate_limits.per_user]
+input_token_limit = 100000
+interval = "60s"
+
+# Anthropic Provider  
+[llm.providers.anthropic]
+type = "anthropic"
+api_key = "{{ env.ANTHROPIC_API_KEY }}"
+
+[llm.providers.anthropic.models.claude-3-5-sonnet-20241022]
+[llm.providers.anthropic.models.claude-3-opus-20240229]
+[llm.providers.anthropic.models.claude-3-haiku-20240307]
+
+# Google Provider
+[llm.providers.google]
+type = "google"
+api_key = "{{ env.GOOGLE_API_KEY }}"
+
+# Note: Model IDs with dots must be quoted in TOML
+[llm.providers.google.models."gemini-1.5-flash"]
+[llm.providers.google.models."gemini-1.5-pro"]
+
+# AWS Bedrock Provider (uses AWS credentials from environment)
+[llm.providers.bedrock]
+type = "bedrock"
+region = "{{ env.AWS_REGION }}"
+
+[llm.providers.bedrock.models."anthropic.claude-3-5-sonnet-20241022-v2:0"]
+[llm.providers.bedrock.models."amazon.nova-micro-v1:0"]
+[llm.providers.bedrock.models."meta.llama3-8b-instruct-v1:0"]
+
+# =============================================================================
+# MCP SERVER CONFIGURATION
+# =============================================================================
+
+[mcp]
+enabled = true
+path = "/mcp"
+enable_structured_content = true
+
+# GitHub Copilot MCP Server
+[mcp.servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+auth.token = "{{ env.GITHUB_TOKEN }}"
+
+# Rate limiting for MCP servers
+[mcp.servers.github.rate_limits]
+limit = 50
+interval = "60s"
+
+# Example: Local filesystem MCP server (uncomment to enable)
+# [mcp.servers.filesystem]
+# cmd = ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"]
+# stderr = "inherit"
+
+# Example: Custom Python MCP server (uncomment to enable) 
+# [mcp.servers.python_tools]
+# cmd = ["python", "-m", "my_mcp_server"]
+# env = { PYTHONPATH = "/opt/mcp", PYTHONUNBUFFERED = "1" }
+# cwd = "/workspace"
+
+# =============================================================================
+# TELEMETRY CONFIGURATION
+# =============================================================================
+
+[telemetry]
+service_name = "{{ env.TELEMETRY_SERVICE_NAME }}"
+
+# Resource attributes for telemetry
+[telemetry.resource_attributes]
+environment = "production"
+
+# OpenTelemetry Collector export (uncomment to enable)
+# [telemetry.exporters.otlp]
+# enabled = true
+# endpoint = "{{ env.OTLP_ENDPOINT }}"
+# protocol = "grpc"
+# timeout = "60s"

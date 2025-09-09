@@ -1,0 +1,80 @@
+# Build artifacts and cache
+target/
+**/*.rs.bk
+.cargo/registry/
+.cargo/git/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Docker
+.dockerignore
+docker-compose*.yml
+Dockerfile*
+
+# Documentation (unless needed in container)
+*.md
+docs/
+changelog/
+
+# Development files
+.serena/
+.claude_code/
+.claude/
+
+# Test artifacts
+coverage/
+.nyc_output/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Node modules (if any)
+node_modules/
+
+# Lock files for other package managers
+yarn.lock
+pnpm-lock.yaml
+package-lock.json
+
+# Development scripts
+scripts/dev/
+scripts/local/
+
+# CI/CD files
+.github/
+.gitlab-ci.yml
+
+# Kubernetes/Helm (if not needed in image)
+helm/
+k8s/
+manifests/
+
+# Backup files
+*.bak
+*.backup
+*~

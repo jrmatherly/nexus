@@ -1,0 +1,135 @@
+version: "3.8"
+
+services:
+  nexus:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${NEXUS_PORT:-8000}:3000"
+    environment:
+      # LLM Provider API Keys
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+
+      # MCP Server Tokens
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+
+      # OAuth2 Configuration (optional)
+      - OAUTH2_JWKS_URL=${OAUTH2_JWKS_URL}
+      - OAUTH2_EXPECTED_ISSUER=${OAUTH2_EXPECTED_ISSUER}
+      - OAUTH2_EXPECTED_AUDIENCE=${OAUTH2_EXPECTED_AUDIENCE}
+
+      # Redis Configuration (for distributed rate limiting)
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+
+      # Telemetry Configuration
+      - OTLP_ENDPOINT=${OTLP_ENDPOINT}
+      - TELEMETRY_SERVICE_NAME=${TELEMETRY_SERVICE_NAME:-nexus}
+    volumes:
+      - ./nexus.toml:/etc/nexus.toml:ro
+      - nexus_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - nexus-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - nexus-network
+
+  # Optional: Hydra OAuth2 Server for development/testing
+  hydra:
+    image: oryd/hydra:v2.2.0
+    ports:
+      - "${HYDRA_PUBLIC_PORT:-4444}:4444"
+      - "${HYDRA_ADMIN_PORT:-4445}:4445"
+    command: serve -c /etc/config/hydra/hydra.yml all --dev
+    volumes:
+      - type: volume
+        source: hydra-sqlite
+        target: /var/lib/sqlite
+        read_only: false
+      - type: bind
+        source: ./docker/hydra
+        target: /etc/config/hydra
+    environment:
+      - DSN=sqlite:///var/lib/sqlite/db.sqlite?_fk=true
+    restart: unless-stopped
+    depends_on:
+      - hydra-migrate
+    networks:
+      - nexus-network
+    profiles:
+      - oauth
+
+  hydra-migrate:
+    image: oryd/hydra:v2.2.0
+    environment:
+      - DSN=sqlite:///var/lib/sqlite/db.sqlite?_fk=true
+    command: migrate -c /etc/config/hydra/hydra.yml sql -e --yes
+    volumes:
+      - type: volume
+        source: hydra-sqlite
+        target: /var/lib/sqlite
+        read_only: false
+      - type: bind
+        source: ./docker/hydra
+        target: /etc/config/hydra
+    restart: "no"
+    networks:
+      - nexus-network
+    profiles:
+      - oauth
+
+  # Optional: OpenTelemetry Collector for metrics
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    command: ["--config=/etc/otelcol-contrib/otel-collector.yml"]
+    volumes:
+      - ./docker/otel-collector.yml:/etc/otelcol-contrib/otel-collector.yml:ro
+    ports:
+      - "${OTEL_GRPC_PORT:-4317}:4317" # OTLP gRPC receiver
+      - "${OTEL_HTTP_PORT:-4318}:4318" # OTLP HTTP receiver
+    restart: unless-stopped
+    networks:
+      - nexus-network
+    profiles:
+      - observability
+
+networks:
+  nexus-network:
+    driver: bridge
+
+volumes:
+  nexus_data:
+    driver: local
+  redis_data:
+    driver: local
+  hydra-sqlite:
+    driver: local

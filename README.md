@@ -97,6 +97,7 @@ Create a `nexus.toml` file to configure Nexus:
 [llm.providers.openai]
 type = "openai"
 api_key = "{{ env.OPENAI_API_KEY }}"
+base_url = "{{ env.OPENAI_BASE_URL }}"  # Optional: Custom endpoint (default: https://api.openai.com/v1)
 forward_token = true
 
 # Model configuration (at least one model required per provider)
@@ -438,6 +439,7 @@ group_values = ["free", "pro", "enterprise"]
 [llm.providers.openai]
 type = "openai"
 api_key = "{{ env.OPENAI_API_KEY }}"
+base_url = "{{ env.OPENAI_BASE_URL }}"  # Optional: Custom endpoint
 
 # Provider-level defaults
 [llm.providers.openai.rate_limits.per_user]
@@ -542,7 +544,7 @@ Configure one or more LLM providers in your `nexus.toml`:
 type = "openai"
 api_key = "{{ env.OPENAI_API_KEY }}"
 # Optional: Use a custom base URL (for Azure OpenAI, proxies, or compatible APIs)
-base_url = "https://api.openai.com/v1"  # Default
+base_url = "{{ env.OPENAI_BASE_URL }}"  # Optional: Custom endpoint (default: https://api.openai.com/v1)
 
 # Model Configuration (REQUIRED - at least one model must be configured)
 [llm.providers.openai.models.gpt-4]
@@ -652,6 +654,7 @@ Each LLM provider requires explicit model configuration. This ensures that only 
 [llm.providers.openai]
 type = "openai"
 api_key = "{{ env.OPENAI_API_KEY }}"
+base_url = "{{ env.OPENAI_BASE_URL }}"  # Optional: Custom endpoint
 
 # Each model you want to expose must be explicitly configured
 [llm.providers.openai.models.gpt-4]
@@ -737,6 +740,7 @@ Enable token forwarding for any provider by setting `forward_token = true`:
 [llm.providers.openai]
 type = "openai"
 api_key = "{{ env.OPENAI_API_KEY }}"  # Fallback key (optional with token forwarding)
+base_url = "{{ env.OPENAI_BASE_URL }}"  # Optional: Custom endpoint
 forward_token = true  # Enable token forwarding for this provider
 
 [llm.providers.openai.models.gpt-4]
@@ -815,6 +819,7 @@ Configure header rules at the provider level:
 [llm.providers.openai]
 type = "openai"
 api_key = "{{ env.OPENAI_API_KEY }}"
+base_url = "{{ env.OPENAI_BASE_URL }}"  # Optional: Custom endpoint
 
 # Forward headers from incoming requests
 [[llm.providers.openai.headers]]
